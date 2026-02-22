@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/movie_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../widgets/movie_card.dart';
+import 'search_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -73,6 +74,18 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: Colors.white,
                         ),
                       ),
+                    ),
+                    _MenuButton(
+                      title: 'Поиск',
+                      isActive: false,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const SearchScreen(),
+                          ),
+                        );
+                      },
                     ),
                     _buildMenuButton(
                       'Фильмы',

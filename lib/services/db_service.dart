@@ -92,6 +92,23 @@ class DbService {
     return maps.map((map) => Movie.fromMap(map)).toList();
   }
 
+  Future<List<Movie>> searchMovies(String query) async {
+    final db = await database;
+    // Заменяем "ё" на "е" в строке поиска для удобства
+    final normalizedQuery =
+        "%${query.replaceAll('ё', 'е').replaceAll('Ё', 'Е')}%";
+
+    final maps = await db.query(
+      'movies',
+      // Используем REPLACE(title, 'ё', 'е') чтобы в базе искать как по "е"
+      where:
+          "REPLACE(LOWER(title), 'ё', 'е') LIKE LOWER(?) OR REPLACE(LOWER(original_title), 'ё', 'е') LIKE LOWER(?)",
+      whereArgs: [normalizedQuery, normalizedQuery],
+      limit: 50, // Ограничим выдачу
+    );
+    return maps.map((map) => Movie.fromMap(map)).toList();
+  }
+
   Future<List<Torrent>> getTorrentsForMovie(int movieId) async {
     final db = await database;
     final maps = await db.query(
