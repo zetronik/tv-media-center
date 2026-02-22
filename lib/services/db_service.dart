@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:http/http.dart' as http;
@@ -32,29 +33,87 @@ class DbService {
   }
 
   Future<void> _downloadAndExtractDb(String dbPath) async {
+    // Legacy support fallback, real logic moved to updateDatabase
+    await updateDatabase();
+  }
+
+  Future<void> updateDatabase({
+    Function(String status, double? progress)? onProgress,
+  }) async {
+    final databasesPath = await getDatabasesPath();
+    final dbPath = join(databasesPath, 'movies.db');
+
+    if (_database != null && _database!.isOpen) {
+      await _database!.close();
+      _database = null;
+    }
+
     try {
-      final response = await http.get(
-        Uri.parse('http://10.0.2.2:8000/movies.zip'),
+      debugPrint('updateDatabase: Подключение к серверу...');
+      onProgress?.call('Подключение к серверу...', 0.0);
+      // Используем 10.0.2.2 для доступа к localhost хостовой машины из эмулятора Android
+      final request = http.Request(
+        'GET',
+        Uri.parse('http://10.0.2.2:5000/movies.zip'),
+      );
+      final response = await http.Client().send(request);
+
+      debugPrint(
+        'updateDatabase: Ответ получен, statusCode = \${response.statusCode}',
       );
 
       if (response.statusCode == 200) {
-        final archive = ZipDecoder().decodeBytes(response.bodyBytes);
+        final expectedBytes = response.contentLength ?? 0;
+        int receivedBytes = 0;
+        final List<int> bytes = [];
+
+        await for (final chunk in response.stream) {
+          bytes.addAll(chunk);
+          receivedBytes += chunk.length;
+          if (expectedBytes > 0) {
+            onProgress?.call(
+              'Скачивание архива...',
+              receivedBytes / expectedBytes,
+            );
+          } else {
+            onProgress?.call('Скачивание архива...', null);
+          }
+        }
+
+        debugPrint('updateDatabase: Распаковка базы данных...');
+        onProgress?.call('Распаковка базы данных...', null);
+        // Выполняем распаковку
+        final archive = ZipDecoder().decodeBytes(bytes);
+        debugPrint('updateDatabase: Архив распакован, ищем .db файл...');
 
         for (final file in archive) {
           if (file.isFile && file.name.endsWith('.db')) {
+            debugPrint(
+              'updateDatabase: Найден файл \${file.name}, сохраняем в \$dbPath',
+            );
             final data = file.content as List<int>;
             File(dbPath)
               ..createSync(recursive: true)
               ..writeAsBytesSync(data);
+            debugPrint('updateDatabase: Файл успешно сохранен!');
             break;
           }
         }
+
+        onProgress?.call('Готово!', 1.0);
+        debugPrint('updateDatabase: Успешно завершено.');
       } else {
-        throw Exception('Failed to download database: \${response.statusCode}');
+        final err =
+            'Ошибка сервера: \${response.statusCode} - \${response.reasonPhrase}';
+        debugPrint('updateDatabase: \$err');
+        throw Exception(err);
       }
-    } catch (e) {
-      throw Exception('Error downloading/extracting DB: \$e');
+    } catch (e, stackTrace) {
+      debugPrint('updateDatabase: Исключение: $e\\n$stackTrace');
+      throw Exception('Ошибка скачивания БД: $e');
     }
+
+    _database = await openDatabase(dbPath);
   }
 
   Future<List<Movie>> getMovies({
@@ -107,6 +166,28 @@ class DbService {
       limit: 50, // Ограничим выдачу
     );
     return maps.map((map) => Movie.fromMap(map)).toList();
+  }
+
+  Future<Map<String, int>> getDbStats() async {
+    final db = await database;
+
+    // Total movies
+    final totalResult = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM movies',
+    );
+    int totalMovies = Sqflite.firstIntValue(totalResult) ?? 0;
+
+    // Movies with torrents (distinct movie_id in torrents table)
+    final withTorrentsResult = await db.rawQuery(
+      'SELECT COUNT(DISTINCT movie_id) as count FROM torrents',
+    );
+    int moviesWithTorrents = Sqflite.firstIntValue(withTorrentsResult) ?? 0;
+
+    return {
+      'total': totalMovies,
+      'with_torrents': moviesWithTorrents,
+      'without_torrents': totalMovies - moviesWithTorrents,
+    };
   }
 
   Future<List<Torrent>> getTorrentsForMovie(int movieId) async {

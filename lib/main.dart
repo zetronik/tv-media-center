@@ -18,7 +18,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => FavoritesProvider()),
         ChangeNotifierProxyProvider<FavoritesProvider, MovieProvider>(
-          create: (_) => MovieProvider()..initDbAndLoad(),
+          create: (_) => MovieProvider(),
           update: (_, favProvider, movieProvider) =>
               movieProvider!..updateFavorites(favProvider.favoriteIds),
         ),

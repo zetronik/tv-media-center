@@ -5,11 +5,17 @@ import '../services/db_service.dart';
 class MovieProvider extends ChangeNotifier {
   List<Movie> movies = [];
   bool isLoading = false;
+
+  bool isUpdatingDb = false;
+  double? updateProgress;
+  String updateStatus = '';
+
   int _currentPage = 0;
   final int _limit = 20;
 
   String currentCategory = 'movies';
   List<int> currentFavoriteIds = [];
+  Map<String, int>? dbStats;
 
   // Вызывается из ProxyProvider при изменении избранного
   void updateFavorites(List<int> favIds) {
@@ -59,17 +65,44 @@ class MovieProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> initDbAndLoad() async {
-    isLoading = true;
+  Future<bool> initDbAndLoad() async {
+    isUpdatingDb = true;
+    updateStatus = 'Начало обновления...';
+    updateProgress = 0.0;
     notifyListeners();
+
+    bool updatedSuccessfully = false;
+
     try {
-      await DbService.instance.init();
-      isLoading = false; // Сбрасываем флаг, чтобы loadMoreMovies() отработал
+      await DbService.instance.updateDatabase(
+        onProgress: (status, progress) {
+          updateStatus = status;
+          updateProgress = progress;
+          notifyListeners();
+        },
+      );
+      updatedSuccessfully = true;
+    } catch (e) {
+      debugPrint('Update failed: \$e, falling back to local DB');
+      try {
+        await DbService.instance.init();
+      } catch (innerE) {
+        debugPrint('Local DB init also failed: \$innerE');
+      }
+    }
+
+    try {
+      dbStats = await DbService.instance.getDbStats();
+      movies.clear();
+      _currentPage = 0;
       await loadMoreMovies();
     } catch (e) {
-      debugPrint('Error: \$e');
-      isLoading = false;
+      debugPrint('Error loading movies after init: \$e');
+    } finally {
+      isUpdatingDb = false;
       notifyListeners();
     }
+
+    return updatedSuccessfully;
   }
 }
