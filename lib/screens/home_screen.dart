@@ -181,6 +181,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         const SizedBox(height: 16),
                         _MenuButton(
+                          title: 'Обновить БД',
+                          isActive: false,
+                          onTap: () {
+                            _performStartupUpdate();
+                          },
+                        ),
+                        _MenuButton(
                           title: 'Поиск',
                           isActive: false,
                           onTap: () {

@@ -126,8 +126,25 @@ class _MovieCardState extends State<MovieCard> {
               ),
               child: SizedBox(
                 height: 20,
-                child: _isFocused
-                    ? Marquee(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final textPainter = TextPainter(
+                      text: TextSpan(
+                        text: widget.movie.title,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      maxLines: 1,
+                      textDirection: TextDirection.ltr,
+                    )..layout(minWidth: 0, maxWidth: double.infinity);
+
+                    final isOverflowing =
+                        textPainter.width > constraints.maxWidth;
+
+                    if (_isFocused && isOverflowing) {
+                      return Marquee(
                         text: widget.movie.title,
                         style: const TextStyle(
                           color: Colors.white,
@@ -144,17 +161,24 @@ class _MovieCardState extends State<MovieCard> {
                         accelerationCurve: Curves.linear,
                         decelerationDuration: const Duration(milliseconds: 500),
                         decelerationCurve: Curves.easeOut,
-                      )
-                    : Text(
-                        widget.movie.title,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 13,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
+                      );
+                    }
+
+                    return Text(
+                      widget.movie.title,
+                      style: TextStyle(
+                        color: _isFocused ? Colors.white : Colors.white70,
+                        fontSize: 13,
+                        fontWeight: _isFocused
+                            ? FontWeight.w500
+                            : FontWeight.normal,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    );
+                  },
+                ),
               ),
             ),
           ],

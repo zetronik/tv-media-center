@@ -52,9 +52,10 @@ class DbService {
       debugPrint('updateDatabase: Подключение к серверу...');
       onProgress?.call('Подключение к серверу...', 0.0);
       // Используем 10.0.2.2 для доступа к localhost хостовой машины из эмулятора Android
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
       final request = http.Request(
         'GET',
-        Uri.parse('http://10.0.2.2:5000/movies.zip'),
+        Uri.parse('http://10.0.2.2:5000/movies.zip?t=$timestamp'),
       );
       final response = await http.Client().send(request);
 
@@ -91,6 +92,13 @@ class DbService {
             debugPrint(
               'updateDatabase: Найден файл \${file.name}, сохраняем в \$dbPath',
             );
+
+            // КРИТИЧНО: удаляем старую БД через API sqflite,
+            // чтобы заодно удалились файлы -wal и -journal
+            if (await databaseExists(dbPath)) {
+              await deleteDatabase(dbPath);
+            }
+
             final data = file.content as List<int>;
             File(dbPath)
               ..createSync(recursive: true)
