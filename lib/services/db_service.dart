@@ -52,69 +52,91 @@ class DbService {
       debugPrint('updateDatabase: Подключение к серверу...');
       onProgress?.call('Подключение к серверу...', 0.0);
       // Используем 10.0.2.2 для доступа к localhost хостовой машины из эмулятора Android
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final request = http.Request(
-        'GET',
-        Uri.parse('http://10.0.2.2:5000/movies.zip?t=$timestamp'),
-      );
-      final response = await http.Client().send(request);
+      final client = http.Client();
+      try {
+        final request = http.Request(
+          'GET',
+          Uri.parse('http://10.0.2.2:5000/movies.zip'),
+        );
+        // Запрещаем кэширование
+        request.headers['Cache-Control'] =
+            'no-cache, no-store, must-revalidate';
+        // Убираем Connection: close, так как иногда это заставляет Werkzeug рвать сокет жестко.
 
-      debugPrint(
-        'updateDatabase: Ответ получен, statusCode = \${response.statusCode}',
-      );
+        final response = await client.send(request);
 
-      if (response.statusCode == 200) {
-        final expectedBytes = response.contentLength ?? 0;
-        int receivedBytes = 0;
-        final List<int> bytes = [];
+        debugPrint(
+          'updateDatabase: Ответ получен, statusCode = ${response.statusCode}',
+        );
 
-        await for (final chunk in response.stream) {
-          bytes.addAll(chunk);
-          receivedBytes += chunk.length;
-          if (expectedBytes > 0) {
-            onProgress?.call(
-              'Скачивание архива...',
-              receivedBytes / expectedBytes,
-            );
-          } else {
-            onProgress?.call('Скачивание архива...', null);
-          }
-        }
+        if (response.statusCode == 200) {
+          final expectedBytes = response.contentLength ?? 0;
+          int receivedBytes = 0;
+          final List<int> bytes = [];
 
-        debugPrint('updateDatabase: Распаковка базы данных...');
-        onProgress?.call('Распаковка базы данных...', null);
-        // Выполняем распаковку
-        final archive = ZipDecoder().decodeBytes(bytes);
-        debugPrint('updateDatabase: Архив распакован, ищем .db файл...');
-
-        for (final file in archive) {
-          if (file.isFile && file.name.endsWith('.db')) {
-            debugPrint(
-              'updateDatabase: Найден файл \${file.name}, сохраняем в \$dbPath',
-            );
-
-            // КРИТИЧНО: удаляем старую БД через API sqflite,
-            // чтобы заодно удалились файлы -wal и -journal
-            if (await databaseExists(dbPath)) {
-              await deleteDatabase(dbPath);
+          try {
+            await for (final chunk in response.stream) {
+              bytes.addAll(chunk);
+              receivedBytes += chunk.length;
+              if (expectedBytes > 0) {
+                onProgress?.call(
+                  'Скачивание архива...',
+                  receivedBytes / expectedBytes,
+                );
+              } else {
+                onProgress?.call('Скачивание архива...', null);
+              }
             }
-
-            final data = file.content as List<int>;
-            File(dbPath)
-              ..createSync(recursive: true)
-              ..writeAsBytesSync(data);
-            debugPrint('updateDatabase: Файл успешно сохранен!');
-            break;
+          } catch (streamError) {
+            debugPrint(
+              'updateDatabase: Стрим прервался ($streamError). Получено: $receivedBytes / $expectedBytes',
+            );
+            // Если сервер оборвал соединение сразу после последнего байта (что часто бывает с Werkzeug),
+            // но мы получили все ожидаемые байты (или хотя бы сколько-то, если размер неизвестен), продолжаем.
+            if (expectedBytes > 0 && receivedBytes < expectedBytes) {
+              throw Exception(
+                'Архив недокачан: $receivedBytes из $expectedBytes',
+              );
+            }
           }
-        }
 
-        onProgress?.call('Готово!', 1.0);
-        debugPrint('updateDatabase: Успешно завершено.');
-      } else {
-        final err =
-            'Ошибка сервера: \${response.statusCode} - \${response.reasonPhrase}';
-        debugPrint('updateDatabase: \$err');
-        throw Exception(err);
+          debugPrint('updateDatabase: Распаковка базы данных...');
+          onProgress?.call('Распаковка базы данных...', null);
+          // Выполняем распаковку
+          final archive = ZipDecoder().decodeBytes(bytes);
+          debugPrint('updateDatabase: Архив распакован, ищем .db файл...');
+
+          for (final file in archive) {
+            if (file.isFile && file.name.endsWith('.db')) {
+              debugPrint(
+                'updateDatabase: Найден файл \${file.name}, сохраняем в \$dbPath',
+              );
+
+              // КРИТИЧНО: удаляем старую БД через API sqflite,
+              // чтобы заодно удалились файлы -wal и -journal
+              if (await databaseExists(dbPath)) {
+                await deleteDatabase(dbPath);
+              }
+
+              final data = file.content as List<int>;
+              File(dbPath)
+                ..createSync(recursive: true)
+                ..writeAsBytesSync(data);
+              debugPrint('updateDatabase: Файл успешно сохранен!');
+              break;
+            }
+          }
+
+          onProgress?.call('Готово!', 1.0);
+          debugPrint('updateDatabase: Успешно завершено.');
+        } else {
+          final err =
+              'Ошибка сервера: \${response.statusCode} - \${response.reasonPhrase}';
+          debugPrint('updateDatabase: \$err');
+          throw Exception(err);
+        }
+      } finally {
+        client.close();
       }
     } catch (e, stackTrace) {
       debugPrint('updateDatabase: Исключение: $e\\n$stackTrace');
