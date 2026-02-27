@@ -56,7 +56,7 @@ class DbService {
       try {
         final request = http.Request(
           'GET',
-          Uri.parse('http://10.0.2.2:5000/movies.zip'),
+          Uri.parse('https://pub-5977a84384ea4066a1ca832afe9ad29d.r2.dev/movies.zip'),
         );
         // Запрещаем кэширование
         request.headers['Cache-Control'] =
