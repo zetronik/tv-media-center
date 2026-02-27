@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/movie_provider.dart';
 import '../providers/favorites_provider.dart';
@@ -14,10 +15,21 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final ScrollController _scrollController = ScrollController();
+  String _appVersion = '';
+
+  Future<void> _initAppVersion() async {
+    final PackageInfo info = await PackageInfo.fromPlatform();
+    if (mounted) {
+      setState(() {
+        _appVersion = 'v${info.version} (build ${info.buildNumber})';
+      });
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    _initAppVersion();
     _scrollController.addListener(() {
       if (_scrollController.position.pixels >=
           _scrollController.position.maxScrollExtent - 200) {
@@ -224,6 +236,18 @@ class _HomeScreenState extends State<HomeScreen> {
                           favProvider,
                         ),
                         const Spacer(),
+                        if (_appVersion.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 16.0),
+                            child: Text(
+                              _appVersion,
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 12,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
                       ],
                     );
                   },
