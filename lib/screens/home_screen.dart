@@ -96,6 +96,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    // Адаптивные параметры ширины и количества колонок
+    double sidebarWidth = 220;
+    int gridColumns = 5;
+
+    if (screenWidth >= 1600) {
+      sidebarWidth = 280;
+      gridColumns = 8;
+    } else if (screenWidth >= 1200) {
+      sidebarWidth = 250;
+      gridColumns = 6;
+    } else if (screenWidth >= 800) {
+      sidebarWidth = 220;
+      gridColumns = 5;
+    } else if (screenWidth >= 600) {
+      sidebarWidth = 200;
+      gridColumns = 4;
+    } else {
+      sidebarWidth = 160;
+      gridColumns = 3;
+    }
+
     return Consumer<MovieProvider>(
       builder: (context, provider, child) {
         if (provider.isUpdatingDb) {
@@ -132,7 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
           body: Row(
             children: [
               Container(
-                width: 220,
+                width: sidebarWidth,
                 color: Colors.black87,
                 child: Consumer2<MovieProvider, FavoritesProvider>(
                   builder: (context, movieProvider, favProvider, child) {
@@ -192,50 +215,59 @@ class _HomeScreenState extends State<HomeScreen> {
                             },
                           ),
                         const SizedBox(height: 16),
-                        _MenuButton(
-                          title: 'Обновить БД',
-                          isActive: false,
-                          onTap: () {
-                            _performStartupUpdate();
-                          },
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _MenuButton(
+                                  title: 'Обновить БД',
+                                  isActive: false,
+                                  onTap: () {
+                                    _performStartupUpdate();
+                                  },
+                                ),
+                                _MenuButton(
+                                  title: 'Поиск',
+                                  isActive: false,
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const SearchScreen(),
+                                      ),
+                                    );
+                                  },
+                                ),
+                                _buildMenuButton(
+                                  'Фильмы',
+                                  'movies',
+                                  movieProvider,
+                                  favProvider,
+                                ),
+                                _buildMenuButton(
+                                  'Мультфильмы',
+                                  'cartoons',
+                                  movieProvider,
+                                  favProvider,
+                                ),
+                                _buildMenuButton(
+                                  'Сериалы',
+                                  'series',
+                                  movieProvider,
+                                  favProvider,
+                                ),
+                                _buildMenuButton(
+                                  'Избранное',
+                                  'favorites',
+                                  movieProvider,
+                                  favProvider,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        _MenuButton(
-                          title: 'Поиск',
-                          isActive: false,
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const SearchScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                        _buildMenuButton(
-                          'Фильмы',
-                          'movies',
-                          movieProvider,
-                          favProvider,
-                        ),
-                        _buildMenuButton(
-                          'Мультфильмы',
-                          'cartoons',
-                          movieProvider,
-                          favProvider,
-                        ),
-                        _buildMenuButton(
-                          'Сериалы',
-                          'series',
-                          movieProvider,
-                          favProvider,
-                        ),
-                        _buildMenuButton(
-                          'Избранное',
-                          'favorites',
-                          movieProvider,
-                          favProvider,
-                        ),
-                        const Spacer(),
                         if (_appVersion.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 16.0),
@@ -272,13 +304,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     return GridView.builder(
                       controller: _scrollController,
                       padding: const EdgeInsets.all(16.0),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 5,
-                            childAspectRatio: 0.67,
-                            crossAxisSpacing: 10,
-                            mainAxisSpacing: 10,
-                          ),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: gridColumns,
+                        childAspectRatio: 0.67,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                      ),
                       itemCount:
                           provider.movies.length + (provider.isLoading ? 1 : 0),
                       itemBuilder: (context, index) {
