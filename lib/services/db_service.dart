@@ -51,7 +51,6 @@ class DbService {
     try {
       debugPrint('updateDatabase: Подключение к серверу...');
       onProgress?.call('Подключение к серверу...', 0.0);
-      // Используем 10.0.2.2 для доступа к localhost хостовой машины из эмулятора Android
       final client = http.Client();
       try {
         final request = http.Request(
