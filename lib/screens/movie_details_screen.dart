@@ -5,6 +5,7 @@ import '../models/torrent.dart';
 import '../services/db_service.dart';
 import 'package:provider/provider.dart';
 import '../providers/favorites_provider.dart';
+import 'package:android_intent_plus/android_intent.dart';
 
 class MovieDetailsScreen extends StatefulWidget {
   final Movie movie;
@@ -285,8 +286,23 @@ class _TorrentCardState extends State<TorrentCard> {
 
     return InkWell(
       onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
-      onTap: () {
-        // TODO: Open magnet link
+      onTap: () async {
+        if (widget.torrent.magnetLink.isEmpty) return;
+
+        try {
+          final intent = AndroidIntent(
+            action: 'action_view',
+            data: widget.torrent.magnetLink,
+          );
+          await intent.launch();
+        } catch (e) {
+          debugPrint('Ошибка при запуске плеера: \$e');
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Не удалось запустить Ace Stream')),
+            );
+          }
+        }
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),

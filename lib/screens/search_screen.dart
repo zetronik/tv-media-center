@@ -18,6 +18,7 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final SpeechToText _speechToText = SpeechToText();
   bool _speechEnabled = false;
+  bool _onlyWithTorrents = false;
   Timer? _debounce;
 
   @override
@@ -64,7 +65,10 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     try {
-      final results = await DbService.instance.searchMovies(query);
+      final results = await DbService.instance.searchMovies(
+        query,
+        onlyWithTorrents: _onlyWithTorrents,
+      );
       if (mounted) {
         setState(() {
           _results = results;
@@ -139,6 +143,21 @@ class _SearchScreenState extends State<SearchScreen> {
                       : _speechToText.stop,
                   iconSize: 32,
                 ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(
+                    Icons.filter_alt,
+                    color: _onlyWithTorrents ? Colors.red : Colors.grey,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _onlyWithTorrents = !_onlyWithTorrents;
+                    });
+                    _performSearch(_searchController.text);
+                  },
+                  tooltip: 'Только с торрентами',
+                  iconSize: 32,
+                ),
               ],
             ),
           ),
@@ -155,8 +174,8 @@ class _SearchScreenState extends State<SearchScreen> {
                 : GridView.builder(
                     padding: const EdgeInsets.all(16.0),
                     gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 5,
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 130, // Уменьшенный размер для TV
                           childAspectRatio: 0.67,
                           crossAxisSpacing: 10,
                           mainAxisSpacing: 10,

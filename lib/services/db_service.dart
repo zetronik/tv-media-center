@@ -4,6 +4,7 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:http/http.dart' as http;
 import 'package:archive/archive.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/movie.dart';
 import '../models/torrent.dart';
@@ -37,7 +38,7 @@ class DbService {
     await updateDatabase();
   }
 
-  Future<void> updateDatabase({
+  Future<int> updateDatabase({
     Function(String status, double? progress)? onProgress,
   }) async {
     final databasesPath = await getDatabasesPath();
@@ -50,23 +51,46 @@ class DbService {
 
     try {
       debugPrint('updateDatabase: Подключение к серверу...');
-      onProgress?.call('Подключение к серверу...', 0.0);
+      onProgress?.call('Проверка обновлений...', 0.0);
+
       final client = http.Client();
       try {
+        // 1. Проверяем хеш MD5
+        String remoteHash = '';
+        try {
+          final hashResponse = await client.get(
+            Uri.parse(
+              'https://pub-5977a84384ea4066a1ca832afe9ad29d.r2.dev/movies.md5',
+            ),
+          );
+          if (hashResponse.statusCode == 200) {
+            remoteHash = hashResponse.body.trim();
+            final prefs = await SharedPreferences.getInstance();
+            final localHash = prefs.getString('movies_db_hash');
+
+            // Если хеши совпадают и файл базы реально существует на устройстве
+            if (localHash == remoteHash && await databaseExists(dbPath)) {
+              debugPrint('Обновление не требуется. Хеш: $localHash');
+              onProgress?.call('Обновления отсутствуют', 1.0);
+              _database = await openDatabase(dbPath);
+              return 2; // Возвращаем статус "Нет обновлений"
+            }
+          }
+        } catch (e) {
+          debugPrint('Ошибка при проверке хеша: $e');
+        }
+
+        // 2. Скачиваем архив, если хеш отличается или базы нет
         final request = http.Request(
           'GET',
-          Uri.parse('https://pub-5977a84384ea4066a1ca832afe9ad29d.r2.dev/movies.zip'),
+          Uri.parse(
+            'https://pub-5977a84384ea4066a1ca832afe9ad29d.r2.dev/movies.zip',
+          ),
         );
-        // Запрещаем кэширование
         request.headers['Cache-Control'] =
             'no-cache, no-store, must-revalidate';
-        // Убираем Connection: close, так как иногда это заставляет Werkzeug рвать сокет жестко.
 
         final response = await client.send(request);
-
-        debugPrint(
-          'updateDatabase: Ответ получен, statusCode = ${response.statusCode}',
-        );
 
         if (response.statusCode == 200) {
           final expectedBytes = response.contentLength ?? 0;
@@ -87,11 +111,6 @@ class DbService {
               }
             }
           } catch (streamError) {
-            debugPrint(
-              'updateDatabase: Стрим прервался ($streamError). Получено: $receivedBytes / $expectedBytes',
-            );
-            // Если сервер оборвал соединение сразу после последнего байта (что часто бывает с Werkzeug),
-            // но мы получили все ожидаемые байты (или хотя бы сколько-то, если размер неизвестен), продолжаем.
             if (expectedBytes > 0 && receivedBytes < expectedBytes) {
               throw Exception(
                 'Архив недокачан: $receivedBytes из $expectedBytes',
@@ -99,20 +118,11 @@ class DbService {
             }
           }
 
-          debugPrint('updateDatabase: Распаковка базы данных...');
           onProgress?.call('Распаковка базы данных...', null);
-          // Выполняем распаковку
           final archive = ZipDecoder().decodeBytes(bytes);
-          debugPrint('updateDatabase: Архив распакован, ищем .db файл...');
 
           for (final file in archive) {
             if (file.isFile && file.name.endsWith('.db')) {
-              debugPrint(
-                'updateDatabase: Найден файл \${file.name}, сохраняем в \$dbPath',
-              );
-
-              // КРИТИЧНО: удаляем старую БД через API sqflite,
-              // чтобы заодно удалились файлы -wal и -journal
               if (await databaseExists(dbPath)) {
                 await deleteDatabase(dbPath);
               }
@@ -121,58 +131,94 @@ class DbService {
               File(dbPath)
                 ..createSync(recursive: true)
                 ..writeAsBytesSync(data);
-              debugPrint('updateDatabase: Файл успешно сохранен!');
+
+              // КРИТИЧНО: Запоминаем новый хеш после успешной установки
+              if (remoteHash.isNotEmpty) {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('movies_db_hash', remoteHash);
+              }
               break;
             }
           }
 
           onProgress?.call('Готово!', 1.0);
-          debugPrint('updateDatabase: Успешно завершено.');
+          _database = await openDatabase(dbPath);
+          return 1; // Успешно обновлено
         } else {
-          final err =
-              'Ошибка сервера: \${response.statusCode} - \${response.reasonPhrase}';
-          debugPrint('updateDatabase: \$err');
-          throw Exception(err);
+          throw Exception('Ошибка сервера: ${response.statusCode}');
         }
       } finally {
         client.close();
       }
     } catch (e, stackTrace) {
-      debugPrint('updateDatabase: Исключение: $e\\n$stackTrace');
+      debugPrint('updateDatabase: Исключение: $e\n$stackTrace');
       throw Exception('Ошибка скачивания БД: $e');
     }
-
-    _database = await openDatabase(dbPath);
   }
 
   Future<List<Movie>> getMovies({
-    int limit = 20,
+    int limit = 100,
     int offset = 0,
     String category = 'movies',
     List<int> favoriteIds = const [],
+    bool onlyWithTorrents = false,
+    int? yearExact,
+    int? yearStart,
+    int? yearEnd,
+    List<String> genres = const [],
+    bool excludeGenres = false,
   }) async {
     final db = await database;
-    String? whereString;
-    List<dynamic>? whereArguments;
+    List<String> conditions = [];
+    List<dynamic> args = [];
 
     if (category == 'cartoons') {
-      whereString = "genres LIKE '%мультфильм%' OR genres LIKE '%анимация%'";
+      conditions.add(
+        "(genres LIKE '%мультфильм%' OR genres LIKE '%анимация%')",
+      );
     } else if (category == 'series') {
-      whereString = "genres LIKE '%сериал%'";
+      conditions.add("genres LIKE '%сериал%'");
     } else if (category == 'favorites') {
-      if (favoriteIds.isEmpty)
-        return []; // Если избранных нет, сразу возвращаем пустоту
-      whereString = "id IN (${favoriteIds.join(',')})";
-      whereArguments = null;
+      if (favoriteIds.isEmpty) return [];
+      conditions.add("id IN (${favoriteIds.join(',')})");
     } else {
-      whereString =
-          "genres NOT LIKE '%сериал%' AND genres NOT LIKE '%мультфильм%' AND genres NOT LIKE '%анимация%'";
+      conditions.add(
+        "genres NOT LIKE '%сериал%' AND genres NOT LIKE '%мультфильм%' AND genres NOT LIKE '%анимация%'",
+      );
     }
+
+    if (onlyWithTorrents) {
+      conditions.add("id IN (SELECT DISTINCT movie_id FROM torrents)");
+    }
+
+    if (yearExact != null) {
+      conditions.add("CAST(SUBSTR(release_date, 1, 4) AS INTEGER) = ?");
+      args.add(yearExact);
+    } else if (yearStart != null && yearEnd != null) {
+      conditions.add(
+        "CAST(SUBSTR(release_date, 1, 4) AS INTEGER) BETWEEN ? AND ?",
+      );
+      args.add(yearStart);
+      args.add(yearEnd);
+    }
+
+    if (genres.isNotEmpty) {
+      List<String> genreConds = [];
+      for (var g in genres) {
+        genreConds.add("genres ${excludeGenres ? 'NOT ' : ''}LIKE ?");
+        args.add('%$g%');
+      }
+      conditions.add(
+        "(" + genreConds.join(excludeGenres ? ' AND ' : ' OR ') + ")",
+      );
+    }
+
+    final whereString = conditions.isEmpty ? null : conditions.join(' AND ');
 
     final maps = await db.query(
       'movies',
       where: whereString,
-      whereArgs: whereArguments,
+      whereArgs: args.isEmpty ? null : args,
       limit: limit,
       offset: offset,
     );
@@ -180,7 +226,10 @@ class DbService {
     return maps.map((map) => Movie.fromMap(map)).toList();
   }
 
-  Future<List<Movie>> searchMovies(String query) async {
+  Future<List<Movie>> searchMovies(
+    String query, {
+    bool onlyWithTorrents = false,
+  }) async {
     final db = await database;
     // Заменяем "ё" на "е" в строке поиска для удобства
     final normalizedQuery =
@@ -190,7 +239,10 @@ class DbService {
       'movies',
       // Используем REPLACE(title, 'ё', 'е') чтобы в базе искать как по "е"
       where:
-          "REPLACE(LOWER(title), 'ё', 'е') LIKE LOWER(?) OR REPLACE(LOWER(original_title), 'ё', 'е') LIKE LOWER(?)",
+          "(REPLACE(LOWER(title), 'ё', 'е') LIKE LOWER(?) OR REPLACE(LOWER(original_title), 'ё', 'е') LIKE LOWER(?))" +
+          (onlyWithTorrents
+              ? " AND id IN (SELECT DISTINCT movie_id FROM torrents)"
+              : ""),
       whereArgs: [normalizedQuery, normalizedQuery],
       limit: 50, // Ограничим выдачу
     );

@@ -11,10 +11,18 @@ class MovieProvider extends ChangeNotifier {
   String updateStatus = '';
 
   int _currentPage = 0;
-  final int _limit = 20;
+  final int _limit = 100;
 
   String currentCategory = 'movies';
   List<int> currentFavoriteIds = [];
+
+  bool filterOnlyTorrents = false;
+  int? filterYearExact;
+  int? filterYearStart;
+  int? filterYearEnd;
+  List<String> filterGenres = [];
+  bool filterExcludeGenres = false;
+
   Map<String, int>? dbStats;
 
   // Вызывается из ProxyProvider при изменении избранного
@@ -41,6 +49,24 @@ class MovieProvider extends ChangeNotifier {
     await loadMoreMovies();
   }
 
+  void toggleTorrentFilter() {
+    filterOnlyTorrents = !filterOnlyTorrents;
+    _reloadCurrentCategory();
+  }
+
+  void setYearFilter(int? exact, int? start, int? end) {
+    filterYearExact = exact;
+    filterYearStart = start;
+    filterYearEnd = end;
+    _reloadCurrentCategory();
+  }
+
+  void setGenreFilter(List<String> genres, bool exclude) {
+    filterGenres = genres;
+    filterExcludeGenres = exclude;
+    _reloadCurrentCategory();
+  }
+
   Future<void> loadMoreMovies() async {
     if (isLoading) return;
 
@@ -52,6 +78,12 @@ class MovieProvider extends ChangeNotifier {
         offset: _currentPage * _limit,
         category: currentCategory,
         favoriteIds: currentFavoriteIds,
+        onlyWithTorrents: filterOnlyTorrents,
+        yearExact: filterYearExact,
+        yearStart: filterYearStart,
+        yearEnd: filterYearEnd,
+        genres: filterGenres,
+        excludeGenres: filterExcludeGenres,
       );
       if (newMovies.isNotEmpty) {
         movies.addAll(newMovies);
@@ -65,29 +97,28 @@ class MovieProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> initDbAndLoad() async {
+  Future<int> initDbAndLoad() async {
     isUpdatingDb = true;
     updateStatus = 'Начало обновления...';
     updateProgress = 0.0;
     notifyListeners();
 
-    bool updatedSuccessfully = false;
+    int updateResult = 0; // 0 - ошибка, 1 - обновлено, 2 - не требуется
 
     try {
-      await DbService.instance.updateDatabase(
+      updateResult = await DbService.instance.updateDatabase(
         onProgress: (status, progress) {
           updateStatus = status;
           updateProgress = progress;
           notifyListeners();
         },
       );
-      updatedSuccessfully = true;
     } catch (e) {
-      debugPrint('Update failed: \$e, falling back to local DB');
+      debugPrint('Update failed: $e, falling back to local DB');
       try {
         await DbService.instance.init();
       } catch (innerE) {
-        debugPrint('Local DB init also failed: \$innerE');
+        debugPrint('Local DB init also failed: $innerE');
       }
     }
 
@@ -97,12 +128,12 @@ class MovieProvider extends ChangeNotifier {
       _currentPage = 0;
       await loadMoreMovies();
     } catch (e) {
-      debugPrint('Error loading movies after init: \$e');
+      debugPrint('Error loading movies after init: $e');
     } finally {
       isUpdatingDb = false;
       notifyListeners();
     }
 
-    return updatedSuccessfully;
+    return updateResult;
   }
 }
