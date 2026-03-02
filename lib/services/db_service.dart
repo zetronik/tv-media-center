@@ -172,7 +172,15 @@ class DbService {
     List<String> conditions = [];
     List<dynamic> args = [];
 
-    if (category == 'cartoons') {
+    if (category == 'now_playing') {
+      // Запрашиваем ID из таблицы now_playing
+      final nowPlayingIds = await db.rawQuery(
+        'SELECT movie_id FROM now_playing',
+      );
+      if (nowPlayingIds.isEmpty) return [];
+      final idsList = nowPlayingIds.map((row) => row['movie_id']).toList();
+      conditions.add("id IN (${idsList.join(',')})");
+    } else if (category == 'cartoons') {
       conditions.add(
         "(genres LIKE '%мультфильм%' OR genres LIKE '%анимация%')",
       );

@@ -39,6 +39,15 @@ class MovieProvider extends ChangeNotifier {
   Future<void> setCategory(String category) async {
     if (currentCategory == category) return;
     currentCategory = category;
+
+    // Сбрасываем фильтры при смене категории
+    filterOnlyTorrents = false;
+    filterYearExact = null;
+    filterYearStart = null;
+    filterYearEnd = null;
+    filterGenres = [];
+    filterExcludeGenres = false;
+
     await _reloadCurrentCategory();
   }
 

@@ -117,41 +117,6 @@ class _HomeScreenState extends State<HomeScreen> {
               width: 400,
               child: Builder(
                 builder: (context) {
-                  Widget buildTvTextField(
-                    String label,
-                    String? initialValue,
-                    Function(String) onChanged,
-                  ) {
-                    return Focus(
-                      onKeyEvent: (node, event) {
-                        if (event is KeyDownEvent) {
-                          if (event.logicalKey ==
-                              LogicalKeyboardKey.arrowDown) {
-                            FocusManager.instance.primaryFocus?.nextFocus();
-                            return KeyEventResult.handled;
-                          } else if (event.logicalKey ==
-                              LogicalKeyboardKey.arrowUp) {
-                            FocusManager.instance.primaryFocus?.previousFocus();
-                            return KeyEventResult.handled;
-                          }
-                        }
-                        return KeyEventResult.ignored;
-                      },
-                      child: TextField(
-                        keyboardType: TextInputType.number,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          labelText: label,
-                          labelStyle: const TextStyle(color: Colors.grey),
-                        ),
-                        onChanged: onChanged,
-                        controller: TextEditingController(
-                          text: initialValue ?? '',
-                        ),
-                      ),
-                    );
-                  }
-
                   return Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -176,27 +141,28 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(height: 16),
                       if (!isRange)
-                        buildTvTextField(
-                          'Точный год (например, 2023)',
-                          exactYear?.toString(),
-                          (val) => exactYear = int.tryParse(val),
+                        _TvTextField(
+                          label: 'Точный год (например, 2023)',
+                          initialValue: exactYear?.toString(),
+                          onChanged: (val) => exactYear = int.tryParse(val),
                         )
                       else
                         Row(
                           children: [
                             Expanded(
-                              child: buildTvTextField(
-                                'От',
-                                startYear?.toString(),
-                                (val) => startYear = int.tryParse(val),
+                              child: _TvTextField(
+                                label: 'От',
+                                initialValue: startYear?.toString(),
+                                onChanged: (val) =>
+                                    startYear = int.tryParse(val),
                               ),
                             ),
                             const SizedBox(width: 16),
                             Expanded(
-                              child: buildTvTextField(
-                                'До',
-                                endYear?.toString(),
-                                (val) => endYear = int.tryParse(val),
+                              child: _TvTextField(
+                                label: 'До',
+                                initialValue: endYear?.toString(),
+                                onChanged: (val) => endYear = int.tryParse(val),
                               ),
                             ),
                           ],
@@ -464,6 +430,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                   },
                                 ),
                                 _buildMenuButton(
+                                  'Сейчас смотрят',
+                                  'now_playing',
+                                  movieProvider,
+                                  favProvider,
+                                ),
+                                _buildMenuButton(
                                   'Фильмы',
                                   'movies',
                                   movieProvider,
@@ -513,15 +485,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   builder: (context, provider, child) {
                     if (provider.isLoading && provider.movies.isEmpty) {
                       return const Center(child: CircularProgressIndicator());
-                    }
-
-                    if (provider.movies.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'Нет контента.',
-                          style: TextStyle(fontSize: 18),
-                        ),
-                      );
                     }
 
                     return Column(
@@ -597,32 +560,42 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
-                        Expanded(
-                          child: GridView.builder(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.all(16.0),
-                            gridDelegate:
-                                const SliverGridDelegateWithMaxCrossAxisExtent(
-                                  maxCrossAxisExtent:
-                                      130, // Уменьшенный размер для TV
-                                  childAspectRatio: 0.67,
-                                  crossAxisSpacing: 10,
-                                  mainAxisSpacing: 10,
-                                ),
-                            itemCount:
-                                provider.movies.length +
-                                (provider.isLoading ? 1 : 0),
-                            itemBuilder: (context, index) {
-                              if (index == provider.movies.length) {
-                                return const Center(
-                                  child: CircularProgressIndicator(),
-                                );
-                              }
+                        if (provider.movies.isEmpty)
+                          const Expanded(
+                            child: Center(
+                              child: Text(
+                                'Нет контента.',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                            ),
+                          )
+                        else
+                          Expanded(
+                            child: GridView.builder(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.all(16.0),
+                              gridDelegate:
+                                  const SliverGridDelegateWithMaxCrossAxisExtent(
+                                    maxCrossAxisExtent:
+                                        130, // Уменьшенный размер для TV
+                                    childAspectRatio: 0.67,
+                                    crossAxisSpacing: 10,
+                                    mainAxisSpacing: 10,
+                                  ),
+                              itemCount:
+                                  provider.movies.length +
+                                  (provider.isLoading ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                if (index == provider.movies.length) {
+                                  return const Center(
+                                    child: CircularProgressIndicator(),
+                                  );
+                                }
 
-                              return MovieCard(movie: provider.movies[index]);
-                            },
+                                return MovieCard(movie: provider.movies[index]);
+                              },
+                            ),
                           ),
-                        ),
                       ],
                     );
                   },
@@ -632,6 +605,74 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _TvTextField extends StatefulWidget {
+  final String label;
+  final String? initialValue;
+  final Function(String) onChanged;
+
+  const _TvTextField({
+    Key? key,
+    required this.label,
+    this.initialValue,
+    required this.onChanged,
+  }) : super(key: key);
+
+  @override
+  State<_TvTextField> createState() => _TvTextFieldState();
+}
+
+class _TvTextFieldState extends State<_TvTextField> {
+  late final FocusNode _focusNode;
+  late final TextEditingController _controller;
+  bool _isKeyboardVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue ?? '');
+    _focusNode = FocusNode(
+      onKeyEvent: (node, event) {
+        if (_isKeyboardVisible) return KeyEventResult.ignored;
+
+        if (event is KeyDownEvent) {
+          if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+            FocusManager.instance.primaryFocus?.nextFocus();
+            return KeyEventResult.handled;
+          } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+            FocusManager.instance.primaryFocus?.previousFocus();
+            return KeyEventResult.handled;
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+
+    return TextField(
+      focusNode: _focusNode,
+      controller: _controller,
+      keyboardType: TextInputType.number,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: widget.label,
+        labelStyle: const TextStyle(color: Colors.grey),
+      ),
+      onChanged: widget.onChanged,
     );
   }
 }
