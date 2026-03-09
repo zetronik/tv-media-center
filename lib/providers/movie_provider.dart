@@ -5,6 +5,7 @@ import '../services/db_service.dart';
 class MovieProvider extends ChangeNotifier {
   List<Movie> movies = [];
   bool isLoading = false;
+  bool hasMore = true;
 
   bool isUpdatingDb = false;
   double? updateProgress;
@@ -13,7 +14,7 @@ class MovieProvider extends ChangeNotifier {
   int _currentPage = 0;
   final int _limit = 100;
 
-  String currentCategory = 'movies';
+  String currentCategory = 'now_playing';
   List<int> currentFavoriteIds = [];
 
   bool filterOnlyTorrents = false;
@@ -22,8 +23,6 @@ class MovieProvider extends ChangeNotifier {
   int? filterYearEnd;
   List<String> filterGenres = [];
   bool filterExcludeGenres = false;
-
-  Map<String, int>? dbStats;
 
   // Вызывается из ProxyProvider при изменении избранного
   void updateFavorites(List<int> favIds) {
@@ -54,6 +53,7 @@ class MovieProvider extends ChangeNotifier {
   Future<void> _reloadCurrentCategory() async {
     movies.clear();
     _currentPage = 0;
+    hasMore = true;
     notifyListeners(); // Очищаем экран
     await loadMoreMovies();
   }
@@ -77,7 +77,7 @@ class MovieProvider extends ChangeNotifier {
   }
 
   Future<void> loadMoreMovies() async {
-    if (isLoading) return;
+    if (isLoading || !hasMore) return;
 
     isLoading = true;
     Future.microtask(() => notifyListeners());
@@ -97,6 +97,11 @@ class MovieProvider extends ChangeNotifier {
       if (newMovies.isNotEmpty) {
         movies.addAll(newMovies);
         _currentPage++;
+        if (newMovies.length < _limit) {
+          hasMore = false; // Достигли конца списка
+        }
+      } else {
+        hasMore = false; // Данных больше нет
       }
     } catch (e) {
       debugPrint('Error loading movies: \$e');
@@ -132,9 +137,9 @@ class MovieProvider extends ChangeNotifier {
     }
 
     try {
-      dbStats = await DbService.instance.getDbStats();
       movies.clear();
       _currentPage = 0;
+      hasMore = true;
       await loadMoreMovies();
     } catch (e) {
       debugPrint('Error loading movies after init: $e');

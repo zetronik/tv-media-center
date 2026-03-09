@@ -45,32 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _performStartupUpdate() async {
     final provider = context.read<MovieProvider>();
-    final result = await provider.initDbAndLoad();
-
-    // Если result > 0, значит все прошло успешно (1 = скачалось, 2 = обновлять не нужно)
-    if (mounted && result > 0) {
-      String title = result == 2
-          ? 'Обновления отсутствуют'
-          : 'Обновление завершено';
-      String content = result == 2
-          ? 'У вас установлена самая актуальная версия базы данных.\nВсего фильмов: ${provider.dbStats?["total"] ?? 0}'
-          : 'База данных успешно обновлена.\nВсего фильмов: ${provider.dbStats?["total"] ?? 0}';
-
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF222222),
-          title: Text(title, style: const TextStyle(color: Colors.white)),
-          content: Text(content, style: const TextStyle(color: Colors.grey)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        ),
-      );
-    }
+    await provider.initDbAndLoad();
   }
 
   @override
@@ -356,6 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           padding: EdgeInsets.all(isTvLayout ? 16.0 : 24.0),
                           child: Text(
                             'TV Media',
+                            textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: isTvLayout ? 20 : 24,
                               fontWeight: FontWeight.bold,
@@ -363,72 +339,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ),
-                        if (movieProvider.dbStats != null)
-                          Builder(
-                            builder: (context) {
-                              final stats = movieProvider.dbStats!;
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 24.0,
-                                  vertical: 8.0,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'БД: ${stats['total']} шт.',
-                                      style: const TextStyle(
-                                        color: Colors.grey,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'С торрентами: ${stats['with_torrents']}',
-                                      style: const TextStyle(
-                                        color: Colors.greenAccent,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Без торрентов: ${stats['without_torrents']}',
-                                      style: const TextStyle(
-                                        color: Colors.redAccent,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
                         SizedBox(height: isTvLayout ? 10 : 30),
                         Expanded(
                           child: SingleChildScrollView(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                _MenuButton(
-                                  title: 'Обновить БД',
-                                  isActive: false,
-                                  onTap: () {
-                                    _performStartupUpdate();
-                                  },
-                                ),
-                                _MenuButton(
-                                  title: 'Поиск',
-                                  isActive: false,
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const SearchScreen(),
-                                      ),
-                                    );
-                                  },
-                                ),
                                 _buildMenuButton(
                                   'Сейчас смотрят',
                                   'now_playing',
@@ -458,6 +374,26 @@ class _HomeScreenState extends State<HomeScreen> {
                                   'favorites',
                                   movieProvider,
                                   favProvider,
+                                ),
+                                _MenuButton(
+                                  title: 'Поиск',
+                                  isActive: false,
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const SearchScreen(),
+                                      ),
+                                    );
+                                  },
+                                ),
+                                _MenuButton(
+                                  title: 'Обновить БД',
+                                  isActive: false,
+                                  onTap: () {
+                                    _performStartupUpdate();
+                                  },
                                 ),
                               ],
                             ),
@@ -573,7 +509,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(
                             child: GridView.builder(
                               controller: _scrollController,
-                              padding: const EdgeInsets.all(16.0),
+                              addRepaintBoundaries: false,
+                              cacheExtent:
+                                  1000, // Держим в памяти больше отрендеренных виджетов вне экрана
+                              padding: const EdgeInsets.only(
+                                left: 16.0,
+                                right: 16.0,
+                                top: 16.0,
+                                bottom: 40.0,
+                              ),
                               gridDelegate:
                                   const SliverGridDelegateWithMaxCrossAxisExtent(
                                     maxCrossAxisExtent:
@@ -588,14 +532,24 @@ class _HomeScreenState extends State<HomeScreen> {
                               itemBuilder: (context, index) {
                                 if (index == provider.movies.length) {
                                   return const Center(
+                                    key: ValueKey('movies_loader'),
                                     child: CircularProgressIndicator(),
                                   );
                                 }
 
-                                return MovieCard(movie: provider.movies[index]);
+                                return MovieCard(
+                                  key: ValueKey(provider.movies[index].id),
+                                  movie: provider.movies[index],
+                                );
                               },
                             ),
                           ),
+                        Container(
+                          height: 4,
+                          color: const Color(
+                            0xFF141414,
+                          ), // Цвет фона для обрезки
+                        ), // Оверскан панель снизу для ТВ
                       ],
                     );
                   },
@@ -626,9 +580,9 @@ class _TvTextField extends StatefulWidget {
 }
 
 class _TvTextFieldState extends State<_TvTextField> {
-  late final FocusNode _focusNode;
   late final TextEditingController _controller;
-  bool _isKeyboardVisible = false;
+  late final FocusNode _focusNode;
+  bool _isEditing = false; // Workaround for TV keyboard focus
 
   @override
   void initState() {
@@ -636,20 +590,46 @@ class _TvTextFieldState extends State<_TvTextField> {
     _controller = TextEditingController(text: widget.initialValue ?? '');
     _focusNode = FocusNode(
       onKeyEvent: (node, event) {
-        if (_isKeyboardVisible) return KeyEventResult.ignored;
-
         if (event is KeyDownEvent) {
-          if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-            FocusManager.instance.primaryFocus?.nextFocus();
-            return KeyEventResult.handled;
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-            FocusManager.instance.primaryFocus?.previousFocus();
-            return KeyEventResult.handled;
+          if (event.logicalKey == LogicalKeyboardKey.select ||
+              event.logicalKey == LogicalKeyboardKey.enter ||
+              event.logicalKey == LogicalKeyboardKey.gameButtonA) {
+            if (!_isEditing) {
+              setState(() {
+                _isEditing = true;
+              });
+              Future.delayed(const Duration(milliseconds: 100), () {
+                SystemChannels.textInput.invokeMethod('TextInput.show');
+              });
+              return KeyEventResult.handled;
+            }
+          }
+
+          if (!_isEditing) {
+            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              node.unfocus();
+              FocusManager.instance.primaryFocus?.nextFocus();
+              return KeyEventResult.handled;
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              node.unfocus();
+              FocusManager.instance.primaryFocus?.previousFocus();
+              return KeyEventResult.handled;
+            }
           }
         }
         return KeyEventResult.ignored;
       },
     );
+
+    _focusNode.addListener(() {
+      if (!_focusNode.hasFocus) {
+        if (_isEditing) {
+          setState(() {
+            _isEditing = false;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -661,12 +641,33 @@ class _TvTextFieldState extends State<_TvTextField> {
 
   @override
   Widget build(BuildContext context) {
-    _isKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
-
     return TextField(
       focusNode: _focusNode,
       controller: _controller,
+      readOnly: !_isEditing,
       keyboardType: TextInputType.number,
+      textInputAction: TextInputAction.done,
+      onTap: () {
+        if (!_isEditing) {
+          setState(() {
+            _isEditing = true;
+          });
+          Future.delayed(const Duration(milliseconds: 100), () {
+            SystemChannels.textInput.invokeMethod('TextInput.show');
+          });
+        }
+      },
+      onEditingComplete: () {
+        setState(() {
+          _isEditing = false;
+        });
+        FocusScope.of(context).unfocus();
+      },
+      onTapOutside: (_) {
+        setState(() {
+          _isEditing = false;
+        });
+      },
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: widget.label,

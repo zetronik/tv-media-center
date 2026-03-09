@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:http/http.dart' as http;
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/movie.dart';
@@ -95,11 +95,14 @@ class DbService {
         if (response.statusCode == 200) {
           final expectedBytes = response.contentLength ?? 0;
           int receivedBytes = 0;
-          final List<int> bytes = [];
+
+          final zipPath = join(databasesPath, 'movies.zip');
+          final zipFile = File(zipPath);
+          final sink = zipFile.openWrite();
 
           try {
             await for (final chunk in response.stream) {
-              bytes.addAll(chunk);
+              sink.add(chunk);
               receivedBytes += chunk.length;
               if (expectedBytes > 0) {
                 onProgress?.call(
@@ -111,15 +114,22 @@ class DbService {
               }
             }
           } catch (streamError) {
+            await sink.close();
+            if (await zipFile.exists()) await zipFile.delete();
             if (expectedBytes > 0 && receivedBytes < expectedBytes) {
               throw Exception(
                 'Архив недокачан: $receivedBytes из $expectedBytes',
               );
             }
+            rethrow;
           }
+          await sink.flush();
+          await sink.close();
 
           onProgress?.call('Распаковка базы данных...', null);
-          final archive = ZipDecoder().decodeBytes(bytes);
+
+          final inputStream = InputFileStream(zipPath);
+          final archive = ZipDecoder().decodeStream(inputStream);
 
           for (final file in archive) {
             if (file.isFile && file.name.endsWith('.db')) {
@@ -127,10 +137,9 @@ class DbService {
                 await deleteDatabase(dbPath);
               }
 
-              final data = file.content as List<int>;
-              File(dbPath)
-                ..createSync(recursive: true)
-                ..writeAsBytesSync(data);
+              final outputStream = OutputFileStream(dbPath);
+              file.writeContent(outputStream);
+              outputStream.close();
 
               // КРИТИЧНО: Запоминаем новый хеш после успешной установки
               if (remoteHash.isNotEmpty) {
@@ -140,6 +149,9 @@ class DbService {
               break;
             }
           }
+
+          inputStream.close();
+          if (await zipFile.exists()) await zipFile.delete();
 
           onProgress?.call('Готово!', 1.0);
           _database = await openDatabase(dbPath);
@@ -196,7 +208,9 @@ class DbService {
     }
 
     if (onlyWithTorrents) {
-      conditions.add("id IN (SELECT DISTINCT movie_id FROM torrents)");
+      conditions.add(
+        "EXISTS (SELECT 1 FROM torrents WHERE torrents.movie_id = movies.id)",
+      );
     }
 
     if (yearExact != null) {
@@ -249,7 +263,7 @@ class DbService {
       where:
           "(REPLACE(LOWER(title), 'ё', 'е') LIKE LOWER(?) OR REPLACE(LOWER(original_title), 'ё', 'е') LIKE LOWER(?))" +
           (onlyWithTorrents
-              ? " AND id IN (SELECT DISTINCT movie_id FROM torrents)"
+              ? " AND EXISTS (SELECT 1 FROM torrents WHERE torrents.movie_id = movies.id)"
               : ""),
       whereArgs: [normalizedQuery, normalizedQuery],
       limit: 50, // Ограничим выдачу
