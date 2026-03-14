@@ -564,35 +564,75 @@ class _HomeScreenState extends State<HomeScreen> {
               )
             else
               Expanded(
-                child: GridView.builder(
-                  controller: _scrollController,
-                  // Optimization: let Flutter manage repaint boundaries normally
-                  cacheExtent: 500,
-                  padding: const EdgeInsets.only(
-                    left: 16.0,
-                    right: 16.0,
-                    top: 16.0,
-                    bottom: 40.0,
-                  ),
-                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent:
-                        MediaQuery.of(context).size.width < 600 ? 180 : 150,
-                    childAspectRatio: 0.67,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                  ),
-                  itemCount:
-                      provider.movies.length + (provider.isLoading ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index == provider.movies.length) {
-                      return const Center(
-                        key: ValueKey('movies_loader'),
-                        child: CircularProgressIndicator(color: Colors.red),
-                      );
-                    }
-                    return MovieCard(
-                      key: ValueKey(provider.movies[index].id),
-                      movie: provider.movies[index],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final double maxExtent =
+                        MediaQuery.of(context).size.width < 600 ? 180 : 150;
+                    // Formula for crossAxisCount in SliverGridDelegateWithMaxCrossAxisExtent:
+                    // crossAxisCount = (width + crossAxisSpacing) ~/ (maxCrossAxisExtent + crossAxisSpacing)
+                    final int crossAxisCount =
+                        (constraints.maxWidth + 10) ~/ (maxExtent + 10);
+                    final int totalItems =
+                        provider.movies.length + (provider.isLoading ? 1 : 0);
+                    final int rows = (totalItems / crossAxisCount).ceil();
+                    final int lastRowStartIndex = (rows - 1) * crossAxisCount;
+
+                    return GridView.builder(
+                      controller: _scrollController,
+                      // Optimization: let Flutter manage repaint boundaries normally
+                      cacheExtent: 500,
+                      padding: const EdgeInsets.only(
+                        left: 16.0,
+                        right: 16.0,
+                        top: 16.0,
+                        bottom: 40.0,
+                      ),
+                      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: maxExtent,
+                        childAspectRatio: 0.67,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                      ),
+                      itemCount: totalItems,
+                      itemBuilder: (context, index) {
+                        if (index == provider.movies.length) {
+                          return const Center(
+                            key: ValueKey('movies_loader'),
+                            child: CircularProgressIndicator(color: Colors.red),
+                          );
+                        }
+
+                        final bool isFirstRow = index < crossAxisCount;
+                        final bool isLastRow = index >= lastRowStartIndex;
+
+                        return Focus(
+                          canRequestFocus: false, // Prevents this wrapper from stealing focus
+                          onFocusChange: (hasFocus) {
+                            if (hasFocus) {
+                              if (isFirstRow && _scrollController.offset > 0) {
+                                _scrollController.animateTo(
+                                  0.0,
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOut,
+                                );
+                              } else if (isLastRow &&
+                                  _scrollController.offset <
+                                      _scrollController
+                                          .position.maxScrollExtent) {
+                                _scrollController.animateTo(
+                                  _scrollController.position.maxScrollExtent,
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOut,
+                                );
+                              }
+                            }
+                          },
+                          child: MovieCard(
+                            key: ValueKey(provider.movies[index].id),
+                            movie: provider.movies[index],
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
