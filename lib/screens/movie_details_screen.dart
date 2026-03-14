@@ -30,7 +30,7 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
     final String fullImageUrl =
         widget.movie.posterUrl.isNotEmpty &&
             widget.movie.posterUrl.startsWith('/')
-        ? 'https://image.tmdb.org/t/p/w500\${widget.movie.posterUrl}'
+        ? 'https://image.tmdb.org/t/p/w500${widget.movie.posterUrl}'
         : widget.movie.posterUrl;
 
     return DefaultTabController(
@@ -40,6 +40,24 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
           title: Text(widget.movie.title),
           backgroundColor: Colors.transparent,
           elevation: 0,
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16.0),
+              child: Consumer<FavoritesProvider>(
+                builder: (context, provider, child) {
+                  final isFav = provider.isFavorite(widget.movie.id);
+                  return IconButton(
+                    icon: Icon(
+                      isFav ? Icons.favorite : Icons.favorite_border,
+                      color: isFav ? Colors.red : Colors.grey,
+                      size: 28,
+                    ),
+                    onPressed: () => provider.toggleFavorite(widget.movie.id),
+                  );
+                },
+              ),
+            ),
+          ],
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Информация'),
@@ -50,7 +68,7 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
         body: TabBarView(
           children: [
             // Вкладка Информация
-            Padding(
+            SingleChildScrollView(
               padding: const EdgeInsets.all(24.0),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -83,9 +101,8 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
                   ),
                   const SizedBox(width: 32),
                   Expanded(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             widget.movie.title,
@@ -135,26 +152,6 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
                                   color: Colors.grey,
                                 ),
                               ),
-                              const Spacer(),
-                              Consumer<FavoritesProvider>(
-                                builder: (context, provider, child) {
-                                  final isFav = provider.isFavorite(
-                                    widget.movie.id,
-                                  );
-                                  return IconButton(
-                                    icon: Icon(
-                                      isFav
-                                          ? Icons.favorite
-                                          : Icons.favorite_border,
-                                      color: isFav ? Colors.red : Colors.grey,
-                                      size: 32,
-                                    ),
-                                    onPressed: () {
-                                      provider.toggleFavorite(widget.movie.id);
-                                    },
-                                  );
-                                },
-                              ),
                             ],
                           ),
                           const SizedBox(height: 24),
@@ -163,7 +160,10 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
                           if (widget.movie.genres.isNotEmpty)
                             _buildMetaText('Жанр:', widget.movie.genres),
                           if (widget.movie.directors.isNotEmpty)
-                            _buildMetaText('Режиссер:', widget.movie.directors),
+                            _buildMetaText(
+                              'Режиссер:',
+                              widget.movie.directors,
+                            ),
                           if (widget.movie.actors.isNotEmpty)
                             _buildMetaText('В ролях:', widget.movie.actors),
                           const SizedBox(height: 24),
@@ -175,35 +175,15 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          // Focus позволяет пульту зацепиться за текст и прокрутить SingleChildScrollView вниз
-                          Focus(
-                            child: Builder(
-                              builder: (context) {
-                                final isFocused = Focus.of(context).hasFocus;
-                                return Container(
-                                  padding: isFocused
-                                      ? const EdgeInsets.all(8)
-                                      : EdgeInsets.zero,
-                                  decoration: BoxDecoration(
-                                    color: isFocused
-                                        ? Colors.grey[800]
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    widget.movie.overview,
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      height: 1.5,
-                                    ),
-                                  ),
-                                );
-                              },
+                          Text(
+                            widget.movie.overview,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              height: 1.5,
                             ),
                           ),
                         ],
                       ),
-                    ),
                   ),
                 ],
               ),
@@ -215,7 +195,7 @@ class _MovieDetailsScreenState extends State<MovieDetailsScreen> {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 } else if (snapshot.hasError) {
-                  return Center(child: Text('Error: \${snapshot.error}'));
+                  return Center(child: Text('Error: ${snapshot.error}'));
                 } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return const Center(
                     child: Text(
@@ -284,133 +264,165 @@ class _TorrentCardState extends State<TorrentCard> {
         ? '${widget.torrent.sizeGb.toStringAsFixed(2)} ГБ'
         : 'Размер неизвестен';
 
-    return InkWell(
-      onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
-      onTap: () async {
-        if (widget.torrent.magnetLink.isEmpty) return;
-
-        try {
-          final intent = AndroidIntent(
-            action: 'action_view',
-            data: widget.torrent.magnetLink,
-          );
-          await intent.launch();
-        } catch (e) {
-          debugPrint('Ошибка при запуске плеера: \$e');
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Не удалось запустить Ace Stream')),
-            );
-          }
-        }
-      },
-      child: AnimatedContainer(
+    return RepaintBoundary(
+      child: AnimatedScale(
+        scale: _isFocused ? 1.02 : 1.0,
         duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: _isFocused ? Colors.grey[800] : Colors.grey[900],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: _isFocused ? Colors.white : Colors.transparent,
-            width: 2,
-          ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              flex: 4,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.torrent.topicTitle.isNotEmpty
-                        ? widget.torrent.topicTitle
-                        : 'Без названия',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: _isFocused ? Colors.white : Colors.grey[300],
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+        curve: Curves.easeOutCubic,
+        child: InkWell(
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
+          onTap: () async {
+            if (widget.torrent.magnetLink.isEmpty) return;
+            try {
+              final intent = AndroidIntent(
+                action: 'action_view',
+                data: widget.torrent.magnetLink,
+              );
+              await intent.launch();
+            } catch (e) {
+              debugPrint('Ошибка при запуске плеера: $e');
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Не удалось запустить Ace Stream'),
                   ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                );
+              }
+            }
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _isFocused ? Colors.white : Colors.transparent,
+                width: 2,
+              ),
+              boxShadow: _isFocused
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.5),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  flex: 5,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildChip(Icons.sd_storage, sizeText),
-                      _buildChip(Icons.hd, widget.torrent.quality),
-                      _buildChip(Icons.video_file, widget.torrent.fileFormat),
-                      _buildChip(Icons.language, widget.torrent.translation),
+                      AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 200),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: _isFocused
+                              ? FontWeight.bold
+                              : FontWeight.w600,
+                          color: _isFocused ? Colors.white : Colors.grey[200],
+                          height: 1.4,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        child: Text(
+                          widget.torrent.topicTitle.isNotEmpty
+                              ? widget.torrent.topicTitle
+                              : 'Без названия',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _buildChip(Icons.sd_storage_outlined, sizeText),
+                          _buildChip(
+                            Icons.hd_outlined,
+                            widget.torrent.quality,
+                          ),
+                          _buildChip(
+                            Icons.video_file_outlined,
+                            widget.torrent.fileFormat,
+                          ),
+                          _buildChip(
+                            Icons.language_outlined,
+                            widget.torrent.translation,
+                          ),
+                        ],
+                      ),
                     ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-            // Правая часть (1/5 ширины) - Text.rich исключает RenderFlex ошибки
-            Expanded(
-              flex: 1,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        const WidgetSpan(
-                          child: Icon(
+                ),
+                const SizedBox(width: 16),
+                // Правая часть (сиды/личи)
+                SizedBox(
+                  width: 60,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          const Icon(
                             Icons.arrow_upward,
-                            color: Colors.green,
-                            size: 18,
+                            color: Colors.greenAccent,
+                            size: 16,
                           ),
-                          alignment: PlaceholderAlignment.middle,
-                        ),
-                        TextSpan(
-                          text: ' ${widget.torrent.seeds}',
-                          style: const TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                          const SizedBox(width: 4),
+                          Text(
+                            '${widget.torrent.seeds}',
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 12),
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        const WidgetSpan(
-                          child: Icon(
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          const Icon(
                             Icons.arrow_downward,
-                            color: Colors.red,
-                            size: 18,
+                            color: Colors.redAccent,
+                            size: 16,
                           ),
-                          alignment: PlaceholderAlignment.middle,
-                        ),
-                        TextSpan(
-                          text: ' ${widget.torrent.leeches}',
-                          style: const TextStyle(
-                            color: Colors.red,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                          const SizedBox(width: 4),
+                          Text(
+                            '${widget.torrent.leeches}',
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                        ],
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -418,18 +430,20 @@ class _TorrentCardState extends State<TorrentCard> {
 
   Widget _buildChip(IconData icon, String text) {
     if (text.isEmpty) return const SizedBox.shrink();
-    String clean = text.replaceAll(RegExp(r'\r|\n'), ' ').trim();
+    final String clean = text.replaceAll(RegExp(r'\r|\n'), ' ').trim();
     final lower = clean.toLowerCase();
     if (lower.contains('скриншот') ||
         lower.startsWith('информация') ||
-        lower.contains('релиз от'))
+        lower.contains('релиз от')) {
       return const SizedBox.shrink();
+    }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black26,
-        borderRadius: BorderRadius.circular(6),
+        color: Colors.black45,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white10),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -437,10 +451,13 @@ class _TorrentCardState extends State<TorrentCard> {
           Icon(icon, size: 14, color: Colors.grey[400]),
           const SizedBox(width: 6),
           Flexible(
-            // ВАЖНО: Flexible не даст чипу разорвать экран
             child: Text(
               clean,
-              style: TextStyle(color: Colors.grey[300], fontSize: 13),
+              style: TextStyle(
+                color: Colors.grey[300],
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),

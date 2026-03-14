@@ -3,7 +3,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/movie_provider.dart';
 import '../providers/favorites_provider.dart';
-import 'package:flutter/services.dart'; // Added import
+import 'package:flutter/services.dart';
 import '../widgets/movie_card.dart';
 import 'search_screen.dart';
 
@@ -73,15 +73,85 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showYearFilterDialog(BuildContext context, MovieProvider provider) {
+    final int currentYear = DateTime.now().year;
+    final List<int> allYears =
+        List.generate(currentYear - 1959, (i) => currentYear - i);
+
     int? exactYear = provider.filterYearExact;
     int? startYear = provider.filterYearStart;
     int? endYear = provider.filterYearEnd;
-    bool isRange = startYear != null || endYear != null;
+    bool isRange = provider.filterYearStart != null ||
+        provider.filterYearEnd != null ||
+        (provider.filterYearExact == null &&
+            (provider.filterYearStart != null ||
+                provider.filterYearEnd != null));
+    // Also treat as range if toggle was previously in range mode
+    if (provider.filterYearStart != null || provider.filterYearEnd != null) {
+      isRange = true;
+    }
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+          // Years available for "До": must be >= startYear+1 (if startYear set)
+          final List<int> toYears = startYear != null
+              ? allYears.where((y) => y > startYear!).toList()
+              : allYears;
+          // Years available for "От": must be <= endYear-1 (if endYear set)
+          final List<int> fromYears = endYear != null
+              ? allYears.where((y) => y < endYear!).toList()
+              : allYears;
+
+          Widget _buildYearDropdown({
+            required String label,
+            required int? value,
+            required List<int> years,
+            required void Function(int?) onChanged,
+          }) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: DropdownButton<int?>(
+                    value: value,
+                    hint: const Text('—',
+                        style: TextStyle(color: Colors.white54)),
+                    dropdownColor: const Color(0xFF2A2A2A),
+                    isExpanded: true,
+                    underline: const SizedBox.shrink(),
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    iconEnabledColor: Colors.white54,
+                    items: [
+                      const DropdownMenuItem<int?>(
+                        value: null,
+                        child:
+                            Text('—', style: TextStyle(color: Colors.white54)),
+                      ),
+                      ...years.map(
+                        (y) => DropdownMenuItem<int?>(
+                          value: y,
+                          child: Text('$y'),
+                        ),
+                      ),
+                    ],
+                    onChanged: onChanged,
+                  ),
+                ),
+              ],
+            );
+          }
+
           return AlertDialog(
             backgroundColor: const Color(0xFF222222),
             title: const Text(
@@ -90,61 +160,80 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             content: SizedBox(
               width: 400,
-              child: Builder(
-                builder: (context) {
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SwitchListTile(
-                        title: const Text(
-                          'Выбрать период',
-                          style: TextStyle(color: Colors.white),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SwitchListTile(
+                    title: const Text(
+                      'Выбрать период',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    value: isRange,
+                    activeColor: Colors.red,
+                    onChanged: (val) {
+                      setDialogState(() {
+                        isRange = val;
+                        if (val) {
+                          exactYear = null;
+                        } else {
+                          startYear = null;
+                          endYear = null;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  if (!isRange)
+                    _buildYearDropdown(
+                      label: 'Год',
+                      value: exactYear,
+                      years: allYears,
+                      onChanged: (val) =>
+                          setDialogState(() => exactYear = val),
+                    )
+                  else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildYearDropdown(
+                            label: 'От',
+                            value: startYear,
+                            years: fromYears,
+                            onChanged: (val) {
+                              setDialogState(() {
+                                startYear = val;
+                                // If endYear is now invalid, clear it
+                                if (val != null &&
+                                    endYear != null &&
+                                    endYear! <= val) {
+                                  endYear = null;
+                                }
+                              });
+                            },
+                          ),
                         ),
-                        value: isRange,
-                        activeColor: Colors.red,
-                        onChanged: (val) {
-                          setDialogState(() {
-                            isRange = val;
-                            if (val)
-                              exactYear = null;
-                            else {
-                              startYear = null;
-                              endYear = null;
-                            }
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      if (!isRange)
-                        _TvTextField(
-                          label: 'Точный год (например, 2023)',
-                          initialValue: exactYear?.toString(),
-                          onChanged: (val) => exactYear = int.tryParse(val),
-                        )
-                      else
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _TvTextField(
-                                label: 'От',
-                                initialValue: startYear?.toString(),
-                                onChanged: (val) =>
-                                    startYear = int.tryParse(val),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: _TvTextField(
-                                label: 'До',
-                                initialValue: endYear?.toString(),
-                                onChanged: (val) => endYear = int.tryParse(val),
-                              ),
-                            ),
-                          ],
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _buildYearDropdown(
+                            label: 'До',
+                            value: endYear,
+                            years: toYears,
+                            onChanged: (val) {
+                              setDialogState(() {
+                                endYear = val;
+                                // If startYear is now invalid, clear it
+                                if (val != null &&
+                                    startYear != null &&
+                                    startYear! >= val) {
+                                  startYear = null;
+                                }
+                              });
+                            },
+                          ),
                         ),
-                    ],
-                  );
-                },
+                      ],
+                    ),
+                ],
               ),
             ),
             actions: [
@@ -160,7 +249,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               TextButton(
                 onPressed: () {
-                  provider.setYearFilter(exactYear, startYear, endYear);
+                  if (isRange) {
+                    provider.setYearFilter(null, startYear, endYear);
+                  } else {
+                    provider.setYearFilter(exactYear, null, null);
+                  }
                   Navigator.pop(context);
                 },
                 child: const Text(
@@ -174,6 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
 
   void _showGenreFilterDialog(BuildContext context, MovieProvider provider) {
     List<String> selectedGenres = List.from(provider.filterGenres);
@@ -237,10 +331,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           checkColor: Colors.white,
                           onChanged: (bool? checked) {
                             setDialogState(() {
-                              if (checked == true)
+                              if (checked == true) {
                                 selectedGenres.add(genre);
-                              else
+                              } else {
                                 selectedGenres.remove(genre);
+                              }
                             });
                           },
                         );
@@ -278,9 +373,242 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildSidebar(BuildContext context, bool isTvLayout) {
+    return Container(
+      width: 220,
+      color: Colors.black87,
+      child: Consumer2<MovieProvider, FavoritesProvider>(
+        builder: (context, movieProvider, favProvider, child) {
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: EdgeInsets.all(isTvLayout ? 16.0 : 24.0),
+                child: Text(
+                  'TV Media',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: isTvLayout ? 20 : 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              SizedBox(height: isTvLayout ? 10 : 30),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildMenuButton(
+                        'Сейчас смотрят',
+                        'now_playing',
+                        movieProvider,
+                        favProvider,
+                      ),
+                      _buildMenuButton(
+                        'Фильмы',
+                        'movies',
+                        movieProvider,
+                        favProvider,
+                      ),
+                      _buildMenuButton(
+                        'Мультфильмы',
+                        'cartoons',
+                        movieProvider,
+                        favProvider,
+                      ),
+                      _buildMenuButton(
+                        'Сериалы',
+                        'series',
+                        movieProvider,
+                        favProvider,
+                      ),
+                      _buildMenuButton(
+                        'Избранное',
+                        'favorites',
+                        movieProvider,
+                        favProvider,
+                      ),
+                      const SizedBox(height: 20),
+                      _MenuButton(
+                        title: 'Поиск',
+                        isActive: false,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const SearchScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      _MenuButton(
+                        title: 'Обновить БД',
+                        isActive: false,
+                        onTap: _performStartupUpdate,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (_appVersion.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16.0),
+                  child: Text(
+                    _appVersion,
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 12,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildMainContent(BuildContext context, bool isTvLayout) {
+    return Consumer<MovieProvider>(
+      builder: (context, provider, child) {
+        if (provider.isLoading && provider.movies.isEmpty) {
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.red),
+          );
+        }
+
+        return Column(
+          children: [
+            Container(
+              height: isTvLayout ? 48 : 60,
+              color: Colors.black45,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Чекбокс для торрентов — фокус идёт прямо на Checkbox
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        value: provider.filterOnlyTorrents,
+                        onChanged: (_) => provider.toggleTorrentFilter(),
+                        activeColor: Colors.red,
+                        focusColor: Colors.white30,
+                      ),
+                      GestureDetector(
+                        onTap: () => provider.toggleTorrentFilter(),
+                        child: Text(
+                          'Только с торрентами',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: isTvLayout ? 14 : 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 16),
+                  // Кнопка фильтра по году
+                  _FilterButton(
+                    title: () {
+                      if (provider.filterYearExact != null) {
+                        return 'Год: ${provider.filterYearExact}';
+                      }
+                      if (provider.filterYearStart != null && provider.filterYearEnd != null) {
+                        return 'с ${provider.filterYearStart} по ${provider.filterYearEnd}';
+                      }
+                      if (provider.filterYearStart != null) {
+                        return 'с ${provider.filterYearStart}';
+                      }
+                      if (provider.filterYearEnd != null) {
+                        return 'по ${provider.filterYearEnd}';
+                      }
+                      return 'Год: Все';
+                    }(),
+                    isActive: provider.filterYearExact != null ||
+                        provider.filterYearStart != null ||
+                        provider.filterYearEnd != null,
+                    isTvLayout: isTvLayout,
+                    onTap: () => _showYearFilterDialog(context, provider),
+                  ),
+                  const SizedBox(width: 8),
+                  // Кнопка фильтра по жанру
+                  _FilterButton(
+                    title: 'Жанры: ' +
+                        (provider.filterGenres.isEmpty
+                            ? 'Все'
+                            : (provider.filterExcludeGenres
+                                ? 'Исключая (${provider.filterGenres.length})'
+                                : 'Включая (${provider.filterGenres.length})')),
+                    isActive: provider.filterGenres.isNotEmpty,
+                    isTvLayout: isTvLayout,
+                    onTap: () => _showGenreFilterDialog(context, provider),
+                  ),
+                ],
+              ),
+            ),
+
+            if (provider.movies.isEmpty)
+              const Expanded(
+                child: Center(
+                  child: Text(
+                    'Нет контента.',
+                    style: TextStyle(fontSize: 18, color: Colors.white54),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: GridView.builder(
+                  controller: _scrollController,
+                  // Optimization: let Flutter manage repaint boundaries normally
+                  cacheExtent: 500,
+                  padding: const EdgeInsets.only(
+                    left: 16.0,
+                    right: 16.0,
+                    top: 16.0,
+                    bottom: 40.0,
+                  ),
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent:
+                        MediaQuery.of(context).size.width < 600 ? 180 : 150,
+                    childAspectRatio: 0.67,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                  ),
+                  itemCount:
+                      provider.movies.length + (provider.isLoading ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index == provider.movies.length) {
+                      return const Center(
+                        key: ValueKey('movies_loader'),
+                        child: CircularProgressIndicator(color: Colors.red),
+                      );
+                    }
+                    return MovieCard(
+                      key: ValueKey(provider.movies[index].id),
+                      movie: provider.movies[index],
+                    );
+                  },
+                ),
+              ),
+            if (isTvLayout)
+              Container(height: 4, color: const Color(0xFF141414)),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isTvLayout = MediaQuery.of(context).size.height < 600;
+    final bool isDesktopOrTv = MediaQuery.of(context).size.width >= 600;
+    final bool isTvLayout = MediaQuery.of(context).size.height < 600;
 
     return Consumer<MovieProvider>(
       builder: (context, provider, child) {
@@ -315,368 +643,39 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         return Scaffold(
-          body: Row(
-            children: [
-              Container(
-                constraints: const BoxConstraints(minWidth: 180, maxWidth: 260),
-                width: MediaQuery.of(context).size.width * 0.18,
-                color: Colors.black87,
-                child: Consumer2<MovieProvider, FavoritesProvider>(
-                  builder: (context, movieProvider, favProvider, child) {
-                    return Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Padding(
-                          padding: EdgeInsets.all(isTvLayout ? 16.0 : 24.0),
-                          child: Text(
-                            'TV Media',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: isTvLayout ? 20 : 24,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: isTvLayout ? 10 : 30),
-                        Expanded(
-                          child: SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _buildMenuButton(
-                                  'Сейчас смотрят',
-                                  'now_playing',
-                                  movieProvider,
-                                  favProvider,
-                                ),
-                                _buildMenuButton(
-                                  'Фильмы',
-                                  'movies',
-                                  movieProvider,
-                                  favProvider,
-                                ),
-                                _buildMenuButton(
-                                  'Мультфильмы',
-                                  'cartoons',
-                                  movieProvider,
-                                  favProvider,
-                                ),
-                                _buildMenuButton(
-                                  'Сериалы',
-                                  'series',
-                                  movieProvider,
-                                  favProvider,
-                                ),
-                                _buildMenuButton(
-                                  'Избранное',
-                                  'favorites',
-                                  movieProvider,
-                                  favProvider,
-                                ),
-                                _MenuButton(
-                                  title: 'Поиск',
-                                  isActive: false,
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const SearchScreen(),
-                                      ),
-                                    );
-                                  },
-                                ),
-                                _MenuButton(
-                                  title: 'Обновить БД',
-                                  isActive: false,
-                                  onTap: () {
-                                    _performStartupUpdate();
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        if (_appVersion.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 16.0),
-                            child: Text(
-                              _appVersion,
-                              style: const TextStyle(
-                                color: Colors.white38,
-                                fontSize: 12,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              Expanded(
-                child: Consumer<MovieProvider>(
-                  builder: (context, provider, child) {
-                    if (provider.isLoading && provider.movies.isEmpty) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-
-                    return Column(
-                      children: [
-                        Container(
-                          height: isTvLayout ? 40 : 60,
-                          color: Colors.black45,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              const SizedBox(width: 16),
-                              // 1. Чекбокс для торрентов
-                              InkWell(
-                                onTap: () => provider.toggleTorrentFilter(),
-                                focusColor: Colors.white24,
-                                borderRadius: BorderRadius.circular(4),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8.0,
-                                    vertical: 4.0,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Checkbox(
-                                        value: provider.filterOnlyTorrents,
-                                        onChanged: (val) =>
-                                            provider.toggleTorrentFilter(),
-                                        activeColor: Colors.red,
-                                      ),
-                                      Text(
-                                        'Только с торрентами',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: isTvLayout ? 14 : 16,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              // 2. Кнопка вызова диалога годов
-                              _FilterButton(
-                                title:
-                                    'Год: ' +
-                                    (provider.filterYearExact != null
-                                        ? '${provider.filterYearExact}'
-                                        : (provider.filterYearStart != null
-                                              ? '${provider.filterYearStart}-${provider.filterYearEnd}'
-                                              : 'Все')),
-                                isActive:
-                                    provider.filterYearExact != null ||
-                                    provider.filterYearStart != null,
-                                isTvLayout: isTvLayout,
-                                onTap: () =>
-                                    _showYearFilterDialog(context, provider),
-                              ),
-                              const SizedBox(width: 8),
-                              // 3. Кнопка вызова диалога жанров
-                              _FilterButton(
-                                title:
-                                    'Жанры: ' +
-                                    (provider.filterGenres.isEmpty
-                                        ? 'Все'
-                                        : (provider.filterExcludeGenres
-                                              ? 'Исключая (${provider.filterGenres.length})'
-                                              : 'Включая (${provider.filterGenres.length})')),
-                                isActive: provider.filterGenres.isNotEmpty,
-                                isTvLayout: isTvLayout,
-                                onTap: () =>
-                                    _showGenreFilterDialog(context, provider),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (provider.movies.isEmpty)
-                          const Expanded(
-                            child: Center(
-                              child: Text(
-                                'Нет контента.',
-                                style: TextStyle(fontSize: 18),
-                              ),
-                            ),
-                          )
-                        else
-                          Expanded(
-                            child: GridView.builder(
-                              controller: _scrollController,
-                              addRepaintBoundaries: false,
-                              cacheExtent:
-                                  1000, // Держим в памяти больше отрендеренных виджетов вне экрана
-                              padding: const EdgeInsets.only(
-                                left: 16.0,
-                                right: 16.0,
-                                top: 16.0,
-                                bottom: 40.0,
-                              ),
-                              gridDelegate:
-                                  const SliverGridDelegateWithMaxCrossAxisExtent(
-                                    maxCrossAxisExtent:
-                                        130, // Уменьшенный размер для TV
-                                    childAspectRatio: 0.67,
-                                    crossAxisSpacing: 10,
-                                    mainAxisSpacing: 10,
-                                  ),
-                              itemCount:
-                                  provider.movies.length +
-                                  (provider.isLoading ? 1 : 0),
-                              itemBuilder: (context, index) {
-                                if (index == provider.movies.length) {
-                                  return const Center(
-                                    key: ValueKey('movies_loader'),
-                                    child: CircularProgressIndicator(),
-                                  );
-                                }
-
-                                return MovieCard(
-                                  key: ValueKey(provider.movies[index].id),
-                                  movie: provider.movies[index],
-                                );
-                              },
-                            ),
-                          ),
-                        Container(
-                          height: 4,
-                          color: const Color(
-                            0xFF141414,
-                          ), // Цвет фона для обрезки
-                        ), // Оверскан панель снизу для ТВ
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
+          backgroundColor: const Color(0xFF141414),
+          appBar: !isDesktopOrTv
+              ? AppBar(
+                  backgroundColor: Colors.black87,
+                  title: const Text(
+                    'TV Media',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  iconTheme: const IconThemeData(color: Colors.white),
+                )
+              : null,
+          drawer: !isDesktopOrTv
+              ? Drawer(
+                  backgroundColor: Colors.black87,
+                  child: _buildSidebar(context, isTvLayout),
+                )
+              : null,
+          body: isDesktopOrTv
+              ? Row(
+                  children: [
+                    _buildSidebar(context, isTvLayout),
+                    Expanded(child: _buildMainContent(context, isTvLayout)),
+                  ],
+                )
+              : _buildMainContent(context, isTvLayout),
         );
       },
     );
   }
 }
 
-class _TvTextField extends StatefulWidget {
-  final String label;
-  final String? initialValue;
-  final Function(String) onChanged;
 
-  const _TvTextField({
-    Key? key,
-    required this.label,
-    this.initialValue,
-    required this.onChanged,
-  }) : super(key: key);
 
-  @override
-  State<_TvTextField> createState() => _TvTextFieldState();
-}
-
-class _TvTextFieldState extends State<_TvTextField> {
-  late final TextEditingController _controller;
-  late final FocusNode _focusNode;
-  bool _isEditing = false; // Workaround for TV keyboard focus
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.initialValue ?? '');
-    _focusNode = FocusNode(
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent) {
-          if (event.logicalKey == LogicalKeyboardKey.select ||
-              event.logicalKey == LogicalKeyboardKey.enter ||
-              event.logicalKey == LogicalKeyboardKey.gameButtonA) {
-            if (!_isEditing) {
-              setState(() {
-                _isEditing = true;
-              });
-              Future.delayed(const Duration(milliseconds: 100), () {
-                SystemChannels.textInput.invokeMethod('TextInput.show');
-              });
-              return KeyEventResult.handled;
-            }
-          }
-
-          if (!_isEditing) {
-            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-              node.unfocus();
-              FocusManager.instance.primaryFocus?.nextFocus();
-              return KeyEventResult.handled;
-            } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-              node.unfocus();
-              FocusManager.instance.primaryFocus?.previousFocus();
-              return KeyEventResult.handled;
-            }
-          }
-        }
-        return KeyEventResult.ignored;
-      },
-    );
-
-    _focusNode.addListener(() {
-      if (!_focusNode.hasFocus) {
-        if (_isEditing) {
-          setState(() {
-            _isEditing = false;
-          });
-        }
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      focusNode: _focusNode,
-      controller: _controller,
-      readOnly: !_isEditing,
-      keyboardType: TextInputType.number,
-      textInputAction: TextInputAction.done,
-      onTap: () {
-        if (!_isEditing) {
-          setState(() {
-            _isEditing = true;
-          });
-          Future.delayed(const Duration(milliseconds: 100), () {
-            SystemChannels.textInput.invokeMethod('TextInput.show');
-          });
-        }
-      },
-      onEditingComplete: () {
-        setState(() {
-          _isEditing = false;
-        });
-        FocusScope.of(context).unfocus();
-      },
-      onTapOutside: (_) {
-        setState(() {
-          _isEditing = false;
-        });
-      },
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        labelText: widget.label,
-        labelStyle: const TextStyle(color: Colors.grey),
-      ),
-      onChanged: widget.onChanged,
-    );
-  }
-}
 
 class _MenuButton extends StatefulWidget {
   final String title;
@@ -698,36 +697,43 @@ class _MenuButtonState extends State<_MenuButton> {
 
   @override
   Widget build(BuildContext context) {
-    // Если высота экрана меньше 600, считаем, что это TV-интерфейс
     final isTvLayout = MediaQuery.of(context).size.height < 600;
-    final double vPadding = isTvLayout ? 8.0 : 16.0;
+    final double vPadding = isTvLayout ? 12.0 : 16.0;
     final double hPadding = isTvLayout ? 16.0 : 24.0;
-    final double fontSize = isTvLayout ? 14.0 : 18.0;
+    final double fontSize = isTvLayout ? 14.0 : 16.0;
 
-    return InkWell(
-      onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
-      onTap: widget.onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(vertical: vPadding, horizontal: hPadding),
-        decoration: BoxDecoration(
-          color: widget.isActive
-              ? Colors.red.withOpacity(0.8)
-              : (_isFocused ? Colors.white12 : Colors.transparent),
-          border: Border(
-            left: BorderSide(
-              color: widget.isActive ? Colors.white : Colors.transparent,
-              width: 4,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: EdgeInsets.symmetric(
+            vertical: vPadding,
+            horizontal: hPadding,
+          ),
+          decoration: BoxDecoration(
+            color: widget.isActive
+                ? Colors.red.withOpacity(0.8)
+                : (_isFocused ? Colors.white12 : Colors.transparent),
+            border: Border(
+              left: BorderSide(
+                color: widget.isActive ? Colors.white : Colors.transparent,
+                width: 4,
+              ),
             ),
           ),
-        ),
-        child: Text(
-          widget.title,
-          style: TextStyle(
-            fontSize: fontSize,
-            fontWeight: widget.isActive ? FontWeight.bold : FontWeight.normal,
-            color: widget.isActive || _isFocused
-                ? Colors.white
-                : Colors.grey[400],
+          child: Text(
+            widget.title,
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight:
+                  widget.isActive ? FontWeight.bold : FontWeight.w500,
+              color: widget.isActive || _isFocused
+                  ? Colors.white
+                  : Colors.grey[400],
+            ),
           ),
         ),
       ),
@@ -740,6 +746,7 @@ class _FilterButton extends StatefulWidget {
   final bool isActive;
   final bool isTvLayout;
   final VoidCallback onTap;
+
   const _FilterButton({
     super.key,
     required this.title,
@@ -747,6 +754,7 @@ class _FilterButton extends StatefulWidget {
     required this.isTvLayout,
     required this.onTap,
   });
+
   @override
   State<_FilterButton> createState() => _FilterButtonState();
 }
@@ -759,20 +767,18 @@ class _FilterButtonState extends State<_FilterButton> {
     return InkWell(
       onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
       onTap: widget.onTap,
-      // Добавляем скругление для эффекта нажатия (ripple), чтобы он не вылезал за края
       borderRadius: BorderRadius.circular(20),
-      child: Container(
-        // Жестко задаем высоту кнопки (32 для планшета, 28 для ТВ)
-        height: widget.isTvLayout ? 28 : 32,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        height: widget.isTvLayout ? 28 : 36,
         padding: EdgeInsets.symmetric(horizontal: widget.isTvLayout ? 12 : 16),
-        // Используем встроенное выравнивание контейнера вместо виджета Center
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: _isFocused
               ? Colors.white24
               : (widget.isActive
-                    ? Colors.red.withOpacity(0.3)
-                    : Colors.transparent),
+                  ? Colors.red.withOpacity(0.3)
+                  : Colors.transparent),
           border: Border.all(
             color: _isFocused
                 ? Colors.white
@@ -781,12 +787,13 @@ class _FilterButtonState extends State<_FilterButton> {
           ),
           borderRadius: BorderRadius.circular(20),
         ),
-        // Убрали Center, оставили только Text
         child: Text(
           widget.title,
           style: TextStyle(
             color: Colors.white,
             fontSize: widget.isTvLayout ? 12 : 14,
+            fontWeight:
+                widget.isActive ? FontWeight.bold : FontWeight.normal,
           ),
         ),
       ),
