@@ -100,18 +100,28 @@ class DbService {
           final zipFile = File(zipPath);
           final sink = zipFile.openWrite();
 
+          // Стрим отдаёт чанки по несколько десятков КБ, то есть на архив в
+          // десятки МБ приходятся тысячи колбэков. Каждый из них доходил до
+          // notifyListeners() и пересобирал экран — прогресс-бар на ТВ дёргался
+          // и подвешивал UI. Репортим не чаще 10 раз в секунду.
+          final stopwatch = Stopwatch()..start();
+          int lastReportMs = -1000;
+
           try {
             await for (final chunk in response.stream) {
               sink.add(chunk);
               receivedBytes += chunk.length;
-              if (expectedBytes > 0) {
-                onProgress?.call(
-                  'Скачивание архива...',
-                  receivedBytes / expectedBytes,
-                );
-              } else {
-                onProgress?.call('Скачивание архива...', null);
-              }
+
+              final int nowMs = stopwatch.elapsedMilliseconds;
+              final bool isComplete =
+                  expectedBytes > 0 && receivedBytes >= expectedBytes;
+              if (nowMs - lastReportMs < 100 && !isComplete) continue;
+              lastReportMs = nowMs;
+
+              onProgress?.call(
+                'Скачивание архива...',
+                expectedBytes > 0 ? receivedBytes / expectedBytes : null,
+              );
             }
           } catch (streamError) {
             await sink.close();

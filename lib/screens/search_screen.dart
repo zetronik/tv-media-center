@@ -23,6 +23,7 @@ class _SearchScreenState extends State<SearchScreen> {
   Timer? _debounce;
   late final FocusNode _searchFocusNode;
   String _kbdLayout = 'RU';
+  int _searchToken = 0;
 
   @override
   void initState() {
@@ -310,6 +311,10 @@ class _SearchScreenState extends State<SearchScreen> {
   Future<void> _performSearch(String query) async {
     if (query.trim().isEmpty) return;
 
+    // Набор на экранной клавиатуре порождает несколько запросов подряд;
+    // без токена поздний ответ по старой строке перезатирает свежие результаты.
+    final int token = ++_searchToken;
+
     setState(() {
       _isLoading = true;
     });
@@ -319,15 +324,15 @@ class _SearchScreenState extends State<SearchScreen> {
         query,
         onlyWithTorrents: _onlyWithTorrents,
       );
-      if (mounted) {
+      if (mounted && token == _searchToken) {
         setState(() {
           _results = results;
         });
       }
     } catch (e) {
-      debugPrint('Error searching movies: \$e');
+      debugPrint('Error searching movies: $e');
     } finally {
-      if (mounted) {
+      if (mounted && token == _searchToken) {
         setState(() {
           _isLoading = false;
         });

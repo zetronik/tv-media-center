@@ -72,7 +72,7 @@ class _MovieCardState extends State<MovieCard> {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.black87.withOpacity(0.8),
+                            color: Colors.black87.withValues(alpha: 0.8),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Row(
@@ -142,30 +142,63 @@ class _MoviePoster extends StatelessWidget {
             ? 'https://image.tmdb.org/t/p/w500${movie.posterUrl}'
             : movie.posterUrl;
 
-    return CachedNetworkImage(
-      imageUrl: fullImageUrl,
-      imageBuilder: (context, imageProvider) => Container(
-        decoration: BoxDecoration(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
-          image: DecorationImage(
-            image: imageProvider,
-            fit: BoxFit.cover,
+    final double dpr = MediaQuery.devicePixelRatioOf(context);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Постер приходит в 500x750 и без memCacheWidth занимает в памяти
+        // ~1.5 МБ. При лимите ImageCache в 100 МБ кэш переполняется уже на
+        // ~66 карточках (страница грузит 100), после чего постеры вытесняются
+        // и декодируются заново — на ТВ это видно как повторное появление
+        // заглушки при скролле. Декодируем ровно под размер ячейки.
+        final int? cacheWidth = constraints.hasBoundedWidth
+            ? (constraints.maxWidth * dpr).round()
+            : null;
+
+        return CachedNetworkImage(
+          imageUrl: fullImageUrl,
+          memCacheWidth: cacheWidth,
+          maxWidthDiskCache: cacheWidth,
+          // Кроссфейд на 500 мс при быстрой прокрутке пультом читается как
+          // моргание — показываем картинку сразу.
+          fadeInDuration: Duration.zero,
+          fadeOutDuration: Duration.zero,
+          placeholderFadeInDuration: Duration.zero,
+          imageBuilder: (context, imageProvider) => Container(
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+              image: DecorationImage(
+                image: imageProvider,
+                fit: BoxFit.cover,
+              ),
+            ),
           ),
-        ),
+          // Статичная заглушка вместо CircularProgressIndicator: спиннер тикает
+          // каждый кадр, а на экране их одновременно десятки.
+          placeholder: (context, url) => const _PosterStub(),
+          errorWidget: (context, url, error) => const _PosterStub(
+            icon: Icons.image_not_supported_outlined,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PosterStub extends StatelessWidget {
+  final IconData icon;
+
+  const _PosterStub({this.icon = Icons.movie_outlined});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(5)),
       ),
-      placeholder: (context, url) => Container(
-        decoration: BoxDecoration(
-          color: Colors.grey[800],
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
-        ),
-        child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-      ),
-      errorWidget: (context, url, error) => Container(
-        decoration: BoxDecoration(
-          color: Colors.grey[900],
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
-        ),
-        child: const Icon(Icons.error, color: Colors.white54, size: 40),
+      child: Center(
+        child: Icon(icon, color: Colors.white24, size: 32),
       ),
     );
   }

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import '../providers/movie_provider.dart';
-import '../providers/favorites_provider.dart';
 import 'package:flutter/services.dart';
 import '../widgets/movie_card.dart';
 import 'search_screen.dart';
@@ -55,16 +54,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildMenuButton(
+    BuildContext context,
     String title,
     String category,
-    MovieProvider provider,
-    FavoritesProvider favProvider,
+    String activeCategory,
   ) {
     return _MenuButton(
       title: title,
-      isActive: provider.currentCategory == category,
+      isActive: activeCategory == category,
       onTap: () {
-        provider.setCategory(category);
+        context.read<MovieProvider>().setCategory(category);
         if (_scrollController.hasClients) {
           _scrollController.jumpTo(0);
         }
@@ -377,8 +376,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       width: 220,
       color: Colors.black87,
-      child: Consumer2<MovieProvider, FavoritesProvider>(
-        builder: (context, movieProvider, favProvider, child) {
+      // Selector, а не Consumer: сайдбару нужна только активная категория.
+      // С Consumer он пересобирался на каждую подгруженную страницу и на
+      // каждое изменение избранного.
+      child: Selector<MovieProvider, String>(
+        selector: (_, provider) => provider.currentCategory,
+        builder: (context, activeCategory, child) {
           return Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -402,34 +405,34 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _buildMenuButton(
+                        context,
                         'Сейчас смотрят',
                         'now_playing',
-                        movieProvider,
-                        favProvider,
+                        activeCategory,
                       ),
                       _buildMenuButton(
+                        context,
                         'Фильмы',
                         'movies',
-                        movieProvider,
-                        favProvider,
+                        activeCategory,
                       ),
                       _buildMenuButton(
+                        context,
                         'Мультфильмы',
                         'cartoons',
-                        movieProvider,
-                        favProvider,
+                        activeCategory,
                       ),
                       _buildMenuButton(
+                        context,
                         'Сериалы',
                         'series',
-                        movieProvider,
-                        favProvider,
+                        activeCategory,
                       ),
                       _buildMenuButton(
+                        context,
                         'Избранное',
                         'favorites',
-                        movieProvider,
-                        favProvider,
+                        activeCategory,
                       ),
                       const SizedBox(height: 20),
                       _MenuButton(
@@ -475,12 +478,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildMainContent(BuildContext context, bool isTvLayout) {
     return Consumer<MovieProvider>(
       builder: (context, provider, child) {
-        if (provider.isLoading && provider.movies.isEmpty) {
-          return const Center(
-            child: CircularProgressIndicator(color: Colors.red),
-          );
-        }
-
+        // Раньше здесь стоял ранний return со спиннером — он подменял собой всю
+        // колонку, поэтому при каждой смене категории панель фильтров исчезала
+        // и появлялась заново. Панель остаётся на месте, меняется только
+        // содержимое области контента.
         return Column(
           children: [
             Container(
@@ -553,93 +554,88 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-            if (provider.movies.isEmpty)
-              const Expanded(
-                child: Center(
-                  child: Text(
-                    'Нет контента.',
-                    style: TextStyle(fontSize: 18, color: Colors.white54),
-                  ),
-                ),
-              )
-            else
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final double maxExtent =
-                        MediaQuery.of(context).size.width < 600 ? 180 : 150;
-                    // Formula for crossAxisCount in SliverGridDelegateWithMaxCrossAxisExtent:
-                    // crossAxisCount = (width + crossAxisSpacing) ~/ (maxCrossAxisExtent + crossAxisSpacing)
-                    final int crossAxisCount =
-                        (constraints.maxWidth + 10) ~/ (maxExtent + 10);
-                    final int totalItems =
-                        provider.movies.length + (provider.isLoading ? 1 : 0);
-                    final int rows = (totalItems / crossAxisCount).ceil();
-                    final int lastRowStartIndex = (rows - 1) * crossAxisCount;
+            Expanded(child: _buildGrid(context, provider)),
 
-                    return GridView.builder(
-                      controller: _scrollController,
-                      // Optimization: let Flutter manage repaint boundaries normally
-                      cacheExtent: 500,
-                      padding: const EdgeInsets.only(
-                        left: 16.0,
-                        right: 16.0,
-                        top: 16.0,
-                        bottom: 40.0,
-                      ),
-                      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: maxExtent,
-                        childAspectRatio: 0.67,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
-                      ),
-                      itemCount: totalItems,
-                      itemBuilder: (context, index) {
-                        if (index == provider.movies.length) {
-                          return const Center(
-                            key: ValueKey('movies_loader'),
-                            child: CircularProgressIndicator(color: Colors.red),
-                          );
-                        }
-
-                        final bool isFirstRow = index < crossAxisCount;
-                        final bool isLastRow = index >= lastRowStartIndex;
-
-                        return Focus(
-                          canRequestFocus: false, // Prevents this wrapper from stealing focus
-                          onFocusChange: (hasFocus) {
-                            if (hasFocus) {
-                              if (isFirstRow && _scrollController.offset > 0) {
-                                _scrollController.animateTo(
-                                  0.0,
-                                  duration: const Duration(milliseconds: 200),
-                                  curve: Curves.easeOut,
-                                );
-                              } else if (isLastRow &&
-                                  _scrollController.offset <
-                                      _scrollController
-                                          .position.maxScrollExtent) {
-                                _scrollController.animateTo(
-                                  _scrollController.position.maxScrollExtent,
-                                  duration: const Duration(milliseconds: 200),
-                                  curve: Curves.easeOut,
-                                );
-                              }
-                            }
-                          },
-                          child: MovieCard(
-                            key: ValueKey(provider.movies[index].id),
-                            movie: provider.movies[index],
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
+            // Индикатор подгрузки вынесен из сетки. Пока он был отдельной
+            // ячейкой (itemCount + 1), появление и исчезновение сдвигало все
+            // карточки и меняло номер последнего ряда — сфокусированная
+            // карточка внезапно становилась «крайней» и дёргала скролл.
+            // Высота полосы постоянна, поэтому геометрия сетки не меняется.
+            SizedBox(
+              height: 2,
+              child: provider.isLoading && provider.movies.isNotEmpty
+                  ? const LinearProgressIndicator(
+                      minHeight: 2,
+                      color: Colors.red,
+                      backgroundColor: Colors.transparent,
+                    )
+                  : null,
+            ),
             if (isTvLayout)
               Container(height: 4, color: const Color(0xFF141414)),
           ],
+        );
+      },
+    );
+  }
+
+  Widget _buildGrid(BuildContext context, MovieProvider provider) {
+    if (provider.movies.isEmpty) {
+      return Center(
+        child: provider.isLoading
+            ? const CircularProgressIndicator(color: Colors.red)
+            : const Text(
+                'Нет контента.',
+                style: TextStyle(fontSize: 18, color: Colors.white54),
+              ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double maxExtent =
+            MediaQuery.of(context).size.width < 600 ? 180 : 150;
+        // Formula for crossAxisCount in SliverGridDelegateWithMaxCrossAxisExtent:
+        // crossAxisCount = (width + crossAxisSpacing) ~/ (maxCrossAxisExtent + crossAxisSpacing)
+        int crossAxisCount = (constraints.maxWidth + 10) ~/ (maxExtent + 10);
+        if (crossAxisCount < 1) crossAxisCount = 1;
+
+        final int count = provider.movies.length;
+        final int lastRowStartIndex =
+            ((count / crossAxisCount).ceil() - 1) * crossAxisCount;
+
+        return GridView.builder(
+          controller: _scrollController,
+          // Высота ячейки ≈ maxExtent / 0.67 ≈ 224. Прежние 500 давали всего
+          // два ряда упреждения — при удержании кнопки пульта сетка уезжала
+          // быстрее, чем успевали декодироваться постеры.
+          cacheExtent: 1200,
+          padding: const EdgeInsets.only(
+            left: 16.0,
+            right: 16.0,
+            top: 16.0,
+            bottom: 40.0,
+          ),
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: maxExtent,
+            childAspectRatio: 0.67,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+          ),
+          itemCount: count,
+          itemBuilder: (context, index) {
+            final movie = provider.movies[index];
+            return _EdgeScrollAnchor(
+              // Ключ на внешнем виджете, а не на MovieCard внутри: иначе при
+              // изменении списка Flutter сопоставляет обёртку по позиции, а
+              // карточку по ключу, и состояние фокуса разъезжается.
+              key: ValueKey(movie.id),
+              controller: _scrollController,
+              isFirstRow: index < crossAxisCount,
+              isLastRow: index >= lastRowStartIndex,
+              child: MovieCard(movie: movie),
+            );
+          },
         );
       },
     );
@@ -650,36 +646,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final bool isDesktopOrTv = MediaQuery.of(context).size.width >= 600;
     final bool isTvLayout = MediaQuery.of(context).size.height < 600;
 
-    return Consumer<MovieProvider>(
-      builder: (context, provider, child) {
-        if (provider.isUpdatingDb) {
-          return Scaffold(
-            backgroundColor: const Color(0xFF141414),
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(color: Colors.red),
-                  const SizedBox(height: 24),
-                  Text(
-                    provider.updateStatus,
-                    style: const TextStyle(color: Colors.white, fontSize: 18),
-                  ),
-                  if (provider.updateProgress != null) ...[
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: 300,
-                      child: LinearProgressIndicator(
-                        value: provider.updateProgress,
-                        color: Colors.red,
-                        backgroundColor: Colors.white24,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          );
+    // Selector вместо Consumer: пересобирать сайдбар и всё тело экрана на
+    // каждый тик прогресса скачивания БД (а их сотни) незачем.
+    return Selector<MovieProvider, bool>(
+      selector: (_, provider) => provider.isUpdatingDb,
+      builder: (context, isUpdatingDb, child) {
+        if (isUpdatingDb) {
+          return const _DbUpdateScreen();
         }
 
         return Scaffold(
@@ -716,6 +689,103 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
 
+
+/// Экран прогресса скачивания БД. Вынесен отдельно, чтобы Consumer слушал
+/// только статус и прогресс, не задевая остальное дерево.
+class _DbUpdateScreen extends StatelessWidget {
+  const _DbUpdateScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF141414),
+      body: Center(
+        child: Consumer<MovieProvider>(
+          builder: (context, provider, child) {
+            return Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(color: Colors.red),
+                const SizedBox(height: 24),
+                Text(
+                  provider.updateStatus,
+                  style: const TextStyle(color: Colors.white, fontSize: 18),
+                ),
+                if (provider.updateProgress != null) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: 300,
+                    child: LinearProgressIndicator(
+                      value: provider.updateProgress,
+                      color: Colors.red,
+                      backgroundColor: Colors.white24,
+                    ),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Доводит сетку до самого края, когда фокус попадает на первый или последний
+/// ряд: системный `ensureVisible` прокручивает минимально и оставляет карточку
+/// впритык к границе viewport, из-за чего верхний отступ и нижняя обрезка
+/// выглядят как срезанные.
+///
+/// Доводка выполняется в post-frame, чтобы не конкурировать с анимацией
+/// `ensureVisible` в том же кадре — раньше две анимации на одном
+/// ScrollController дёргали список.
+class _EdgeScrollAnchor extends StatelessWidget {
+  final ScrollController controller;
+  final bool isFirstRow;
+  final bool isLastRow;
+  final Widget child;
+
+  const _EdgeScrollAnchor({
+    super.key,
+    required this.controller,
+    required this.isFirstRow,
+    required this.isLastRow,
+    required this.child,
+  });
+
+  void _snapToEdge() {
+    if (!controller.hasClients) return;
+    final position = controller.position;
+
+    final double? target;
+    if (isFirstRow && position.pixels > 0) {
+      target = 0.0;
+    } else if (isLastRow && position.pixels < position.maxScrollExtent) {
+      target = position.maxScrollExtent;
+    } else {
+      target = null;
+    }
+    if (target == null) return;
+
+    controller.animateTo(
+      target,
+      duration: const Duration(milliseconds: 150),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      canRequestFocus: false, // Prevents this wrapper from stealing focus
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) => _snapToEdge());
+      },
+      child: child,
+    );
+  }
+}
 
 class _MenuButton extends StatefulWidget {
   final String title;
@@ -755,7 +825,7 @@ class _MenuButtonState extends State<_MenuButton> {
           ),
           decoration: BoxDecoration(
             color: widget.isActive
-                ? Colors.red.withOpacity(0.8)
+                ? Colors.red.withValues(alpha: 0.8)
                 : (_isFocused ? Colors.white12 : Colors.transparent),
             border: Border(
               left: BorderSide(
@@ -817,7 +887,7 @@ class _FilterButtonState extends State<_FilterButton> {
           color: _isFocused
               ? Colors.white24
               : (widget.isActive
-                  ? Colors.red.withOpacity(0.3)
+                  ? Colors.red.withValues(alpha: 0.3)
                   : Colors.transparent),
           border: Border.all(
             color: _isFocused

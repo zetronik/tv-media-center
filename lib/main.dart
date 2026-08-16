@@ -6,6 +6,15 @@ import 'screens/home_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Дефолт — 100 МБ и 1000 объектов, что для Android TV с 1–2 ГБ ОЗУ много:
+  // кэш успевает вытеснить постеры соседних рядов и провоцирует паузы GC.
+  // Постеры декодируются под размер ячейки (см. _MoviePoster), поэтому 48 МБ
+  // покрывают несколько экранов сетки с запасом.
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 48 << 20
+    ..maximumSize = 400;
+
   runApp(const MyApp());
 }
 
