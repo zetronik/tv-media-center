@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Отображаемое имя приложения. Через ресурс, а не литералом в манифесте:
+         литерал попадает в ApplicationInfo.nonLocalizedLabel, тогда как
+         лаунчеры и системный UI ожидают ссылку на ресурс. -->
+    <string name="app_name">Torrent DB</string>
+</resources>

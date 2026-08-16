@@ -98,12 +98,32 @@ class _InfoTab extends StatefulWidget {
   State<_InfoTab> createState() => _InfoTabState();
 }
 
-class _InfoTabState extends State<_InfoTab>
-    with AutomaticKeepAliveClientMixin {
+class _InfoTabState extends State<_InfoTab> with AutomaticKeepAliveClientMixin {
   final ScrollController _scrollController = ScrollController();
 
   @override
   bool get wantKeepAlive => true;
+
+  /// Шаг прокрутки на одно нажатие. Прежние 50 px на экране телевизора — это
+  /// десятки нажатий на страницу описания.
+  static const double _step = 120.0;
+
+  /// Прокрутка мгновенная, без animateTo. При удержании кнопки пульт шлёт
+  /// повтор каждые ~30–50 мс, и каждая 100-мс анимация отменяла предыдущую —
+  /// получался каскад незавершённых ScrollActivity и рваное движение.
+  /// Возвращает false, если прокручивать некуда: тогда событие отдаётся
+  /// системе и фокус уходит traversal'ом (вверх — на вкладки).
+  bool _scrollBy(double delta) {
+    if (!_scrollController.hasClients) return false;
+    final position = _scrollController.position;
+    final double target = (position.pixels + delta).clamp(
+      0.0,
+      position.maxScrollExtent,
+    );
+    if ((target - position.pixels).abs() < 0.5) return false;
+    position.jumpTo(target);
+    return true;
+  }
 
   @override
   void dispose() {
@@ -118,38 +138,31 @@ class _InfoTabState extends State<_InfoTab>
     final movie = widget.movie;
     final String fullImageUrl =
         movie.posterUrl.isNotEmpty && movie.posterUrl.startsWith('/')
-            ? 'https://image.tmdb.org/t/p/w500${movie.posterUrl}'
-            : movie.posterUrl;
+        ? 'https://image.tmdb.org/t/p/w500${movie.posterUrl}'
+        : movie.posterUrl;
 
     return Focus(
+      // Без autofocus фокус после Navigator.push остаётся на scope, и первое
+      // нажатие пульта уходит впустую на поиск цели — на ТВ это читается как
+      // «экран не отвечает».
+      autofocus: true,
       onKeyEvent: (node, event) {
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
-        const double scrollAmount = 50.0;
+        // KeyRepeatEvent обязателен. Раньше обрабатывался только KeyDownEvent,
+        // а удержание кнопки на пульте генерирует именно repeat — то есть
+        // страница не прокручивалась удержанием, приходилось жать многократно.
+        if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+          return KeyEventResult.ignored;
+        }
+
         if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-          if (_scrollController.offset <
-              _scrollController.position.maxScrollExtent) {
-            _scrollController.animateTo(
-              (_scrollController.offset + scrollAmount).clamp(
-                0.0,
-                _scrollController.position.maxScrollExtent,
-              ),
-              duration: const Duration(milliseconds: 100),
-              curve: Curves.linear,
-            );
-            return KeyEventResult.handled;
-          }
-        } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-          if (_scrollController.offset > 0) {
-            _scrollController.animateTo(
-              (_scrollController.offset - scrollAmount).clamp(
-                0.0,
-                _scrollController.position.maxScrollExtent,
-              ),
-              duration: const Duration(milliseconds: 100),
-              curve: Curves.linear,
-            );
-            return KeyEventResult.handled;
-          }
+          return _scrollBy(_step)
+              ? KeyEventResult.handled
+              : KeyEventResult.ignored;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+          return _scrollBy(-_step)
+              ? KeyEventResult.handled
+              : KeyEventResult.ignored;
         }
         return KeyEventResult.ignored;
       },
@@ -214,7 +227,10 @@ class _InfoTabState extends State<_InfoTab>
                         movie.releaseDate.length >= 4
                             ? movie.releaseDate.substring(0, 4)
                             : movie.releaseDate,
-                        style: const TextStyle(fontSize: 20, color: Colors.grey),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          color: Colors.grey,
+                        ),
                       ),
                     ],
                   ),
@@ -285,10 +301,7 @@ class _TorrentsTabState extends State<_TorrentsTab>
           return Center(child: Text('Error: ${snapshot.error}'));
         } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return const Center(
-            child: Text(
-              'Торренты не найдены',
-              style: TextStyle(fontSize: 24),
-            ),
+            child: Text('Торренты не найдены', style: TextStyle(fontSize: 24)),
           );
         }
 
@@ -319,9 +332,20 @@ class _MoviePoster extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Постер показывается в колонке шириной 300 lp, а приходит 500x750.
+    // Единственная картинка погоды не делает, но при переходах по фильмам
+    // такие буферы копятся в ImageCache и вытесняют постеры сетки, которую
+    // пользователь увидит сразу после «Назад».
+    final int cacheWidth = (300 * MediaQuery.devicePixelRatioOf(context))
+        .round();
+
     return CachedNetworkImage(
       imageUrl: imageUrl,
       fit: BoxFit.cover,
+      memCacheWidth: cacheWidth,
+      maxWidthDiskCache: cacheWidth,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
       placeholder: (context, url) => Container(
         color: Colors.grey[800],
         height: 450,
@@ -384,179 +408,215 @@ class TorrentCard extends StatefulWidget {
   State<TorrentCard> createState() => _TorrentCardState();
 }
 
+class _ChipData {
+  final IconData icon;
+  final String text;
+
+  const _ChipData(this.icon, this.text);
+}
+
 class _TorrentCardState extends State<TorrentCard> {
   bool _isFocused = false;
 
+  late final String _title;
+  late final List<_ChipData> _chips;
+
+  static final RegExp _newlines = RegExp(r'\r|\n');
+
+  /// Поля торрента приходят из внешней БД и в `translation` регулярно попадает
+  /// не короткая метка, а кусок описания раздачи — на это намекают сами
+  /// фильтры ниже. Раньше вся эта чистка (replaceAll + toLowerCase + contains)
+  /// выполнялась внутри build, то есть на каждое перемещение фокуса по списку
+  /// пережёвывались килобайты текста × 4 поля. Теперь — один раз за карточку.
+  static String? _prepareChipText(String text) {
+    if (text.isEmpty) return null;
+
+    final String clean = text.replaceAll(_newlines, ' ').trim();
+    if (clean.isEmpty) return null;
+
+    final String lower = clean.toLowerCase();
+    if (lower.contains('скриншот') ||
+        lower.startsWith('информация') ||
+        lower.contains('релиз от')) {
+      return null;
+    }
+    return _truncate(clean, 80);
+  }
+
+  /// TextPainter раскладывает строку целиком и только потом обрезает по
+  /// ellipsis, поэтому километровое значение стоит дорого даже в одну строку.
+  static String _truncate(String value, int max) =>
+      value.length <= max ? value : '${value.substring(0, max)}…';
+
   @override
-  Widget build(BuildContext context) {
-    final sizeText = widget.torrent.sizeGb > 0
-        ? '${widget.torrent.sizeGb.toStringAsFixed(2)} ГБ'
+  void initState() {
+    super.initState();
+    final torrent = widget.torrent;
+
+    _title = _truncate(
+      torrent.topicTitle.isNotEmpty ? torrent.topicTitle : 'Без названия',
+      200,
+    );
+
+    final String sizeText = torrent.sizeGb > 0
+        ? '${torrent.sizeGb.toStringAsFixed(2)} ГБ'
         : 'Размер неизвестен';
 
+    final chips = <_ChipData>[];
+    void add(IconData icon, String raw) {
+      final String? text = _prepareChipText(raw);
+      if (text != null) chips.add(_ChipData(icon, text));
+    }
+
+    add(Icons.sd_storage_outlined, sizeText);
+    add(Icons.hd_outlined, torrent.quality);
+    add(Icons.video_file_outlined, torrent.fileFormat);
+    add(Icons.language_outlined, torrent.translation);
+    _chips = chips;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return RepaintBoundary(
-      child: InkWell(
-        focusColor: Colors.transparent,
-        hoverColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        splashColor: Colors.transparent,
-        onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
-        onTap: () async {
-          if (widget.torrent.magnetLink.isEmpty) return;
-          try {
-            final intent = AndroidIntent(
-              action: 'action_view',
-              data: widget.torrent.magnetLink,
-            );
-            await intent.launch();
-          } catch (e) {
-            debugPrint('Ошибка при запуске плеера: $e');
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Не удалось запустить Ace Stream'),
-                ),
+      // См. комментарий в MovieCard: без локального Material ink-эффекты
+      // InkWell инвалидируют слой Material'а Scaffold целиком.
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
+          onTap: () async {
+            if (widget.torrent.magnetLink.isEmpty) return;
+            try {
+              final intent = AndroidIntent(
+                action: 'action_view',
+                data: widget.torrent.magnetLink,
               );
+              await intent.launch();
+            } catch (e) {
+              debugPrint('Ошибка при запуске плеера: $e');
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Не удалось запустить Ace Stream'),
+                  ),
+                );
+              }
             }
-          }
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          margin: const EdgeInsets.only(bottom: 16),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2A2A2A),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _isFocused ? Colors.white : Colors.transparent,
-              width: 2,
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _isFocused ? Colors.white : Colors.transparent,
+                width: 2,
+              ),
+              // Тени убраны. Здесь они были хуже, чем в MovieCard: размытие
+              // рисовалось не только в фокусе, а у КАЖДОЙ карточки постоянно
+              // (blurRadius 4 в обычном состоянии, 10 в фокусе). Каждое такое
+              // размытие — saveLayer, и на списке из полутора десятков
+              // торрентов это постоянная нагрузка на GPU приставки.
+              // Карточка (0xFF2A2A2A) и так контрастна фону (0xFF141414).
             ),
-            boxShadow: _isFocused
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ]
-                : [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.2),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                flex: 5,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AnimatedDefaultTextStyle(
-                      duration: const Duration(milliseconds: 200),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight:
-                            _isFocused ? FontWeight.bold : FontWeight.w600,
-                        color: _isFocused ? Colors.white : Colors.grey[200],
-                        height: 1.4,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      child: Text(
-                        widget.torrent.topicTitle.isNotEmpty
-                            ? widget.torrent.topicTitle
-                            : 'Без названия',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _buildChip(Icons.sd_storage_outlined, sizeText),
-                        _buildChip(Icons.hd_outlined, widget.torrent.quality),
-                        _buildChip(
-                          Icons.video_file_outlined,
-                          widget.torrent.fileFormat,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  flex: 5,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // fontWeight намеренно постоянный. TextStyle.compareTo
+                      // относит смену веса к RenderComparison.layout, то есть
+                      // подсветка фокуса заставляла заново раскладывать текст
+                      // (а с ним Column → Wrap → Row всей карточки). Меняется
+                      // только цвет — это RenderComparison.paint, без layout.
+                      AnimatedDefaultTextStyle(
+                        duration: const Duration(milliseconds: 200),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: _isFocused ? Colors.white : Colors.grey[200],
+                          height: 1.4,
                         ),
-                        _buildChip(
-                          Icons.language_outlined,
-                          widget.torrent.translation,
-                        ),
-                      ],
-                    ),
-                  ],
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        child: Text(_title),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [for (final chip in _chips) _buildChip(chip)],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 16),
-              SizedBox(
-                width: 60,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        const Icon(
-                          Icons.arrow_upward,
-                          color: Colors.greenAccent,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${widget.torrent.seeds}',
-                          style: const TextStyle(
+                const SizedBox(width: 16),
+                SizedBox(
+                  width: 60,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          const Icon(
+                            Icons.arrow_upward,
                             color: Colors.greenAccent,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
+                            size: 16,
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        const Icon(
-                          Icons.arrow_downward,
-                          color: Colors.redAccent,
-                          size: 16,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${widget.torrent.leeches}',
-                          style: const TextStyle(
+                          const SizedBox(width: 4),
+                          Text(
+                            '${widget.torrent.seeds}',
+                            style: const TextStyle(
+                              color: Colors.greenAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          const Icon(
+                            Icons.arrow_downward,
                             color: Colors.redAccent,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
+                            size: 16,
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                          const SizedBox(width: 4),
+                          Text(
+                            '${widget.torrent.leeches}',
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildChip(IconData icon, String text) {
-    if (text.isEmpty) return const SizedBox.shrink();
-    final String clean = text.replaceAll(RegExp(r'\r|\n'), ' ').trim();
-    final lower = clean.toLowerCase();
-    if (lower.contains('скриншот') ||
-        lower.startsWith('информация') ||
-        lower.contains('релиз от')) {
-      return const SizedBox.shrink();
-    }
-
+  Widget _buildChip(_ChipData chip) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -567,11 +627,11 @@ class _TorrentCardState extends State<TorrentCard> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: Colors.grey[400]),
+          Icon(chip.icon, size: 14, color: Colors.grey[400]),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              clean,
+              chip.text,
               style: TextStyle(
                 color: Colors.grey[300],
                 fontSize: 13,

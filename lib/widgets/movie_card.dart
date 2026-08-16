@@ -18,110 +18,117 @@ class _MovieCardState extends State<MovieCard> {
   @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
-      child: InkWell(
-        focusColor: Colors.transparent,
-        hoverColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        splashColor: Colors.transparent,
-        onFocusChange: (hasFocus) {
-          setState(() => _isFocused = hasFocus);
-        },
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => MovieDetailsScreen(movie: widget.movie),
+      // Локальный Material обязателен. InkWell рисует свои ink-эффекты не у
+      // себя, а в ближайшем Material — без этой обёртки им оказывался Material
+      // самого Scaffold. InkWell создаёт InkHighlight даже когда все цвета
+      // прозрачные (см. InkResponse.updateHighlight), а тот анимирует альфу
+      // ~200 мс и на каждом кадре дёргает markNeedsPaint() на Material.
+      // То есть каждое перемещение фокуса по сетке инвалидировало слой на весь
+      // экран — выше RepaintBoundary карточек, так что они не помогали.
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (hasFocus) {
+            setState(() => _isFocused = hasFocus);
+          },
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => MovieDetailsScreen(movie: widget.movie),
+              ),
+            );
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            decoration: BoxDecoration(
+              color: const Color(0xFF222222),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: _isFocused ? Colors.white : Colors.transparent,
+                width: 3,
+              ),
+              // Тень с blurRadius убрана намеренно: размытие требует saveLayer и
+              // пересчитывается на каждом кадре 200-мс анимации фокуса, что на
+              // GPU ТВ-приставки заметно дороже самой карточки. Белой рамки в
+              // 3 px на экране телевизора достаточно. Вернуть — добавить сюда
+              // boxShadow обратно.
             ),
-          );
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          decoration: BoxDecoration(
-            color: const Color(0xFF222222),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: _isFocused ? Colors.white : Colors.transparent,
-              width: 3,
-            ),
-            boxShadow: _isFocused
-                ? [
-                    const BoxShadow(
-                      color: Colors.black54,
-                      blurRadius: 10,
-                      offset: Offset(0, 4),
-                    )
-                  ]
-                : [],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: _MoviePoster(movie: widget.movie),
-                    ),
-                    if (widget.movie.rating > 0)
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black87.withValues(alpha: 0.8),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.star,
-                                color: Colors.amber,
-                                size: 12,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                widget.movie.rating.toStringAsFixed(1),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(child: _MoviePoster(movie: widget.movie)),
+                      if (widget.movie.rating > 0)
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black87.withValues(alpha: 0.8),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.star,
+                                  color: Colors.amber,
+                                  size: 12,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Text(
+                                  widget.movie.rating.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8.0,
-                  vertical: 8.0,
-                ),
-                child: SizedBox(
-                  height: 20,
-                  child: AnimatedDefaultTextStyle(
-                    duration: const Duration(milliseconds: 200),
-                    style: TextStyle(
-                      color: _isFocused ? Colors.white : Colors.white70,
-                      fontSize: 13,
-                      fontWeight:
-                          _isFocused ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    child: Text(widget.movie.title),
+                    ],
                   ),
                 ),
-              ),
-            ],
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8.0,
+                    vertical: 8.0,
+                  ),
+                  child: SizedBox(
+                    height: 20,
+                    // Вес шрифта постоянный: TextStyle.compareTo относит его
+                    // смену к RenderComparison.layout, поэтому подсветка
+                    // фокуса вызывала повторную раскладку текста на каждой
+                    // карточке, по которой пробегает фокус. Цвет — paint-only.
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 200),
+                      style: TextStyle(
+                        color: _isFocused ? Colors.white : Colors.white70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      child: Text(widget.movie.title),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -139,8 +146,8 @@ class _MoviePoster extends StatelessWidget {
   Widget build(BuildContext context) {
     final String fullImageUrl =
         movie.posterUrl.isNotEmpty && movie.posterUrl.startsWith('/')
-            ? 'https://image.tmdb.org/t/p/w500${movie.posterUrl}'
-            : movie.posterUrl;
+        ? 'https://image.tmdb.org/t/p/w500${movie.posterUrl}'
+        : movie.posterUrl;
 
     final double dpr = MediaQuery.devicePixelRatioOf(context);
 
@@ -166,19 +173,17 @@ class _MoviePoster extends StatelessWidget {
           placeholderFadeInDuration: Duration.zero,
           imageBuilder: (context, imageProvider) => Container(
             decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
-              image: DecorationImage(
-                image: imageProvider,
-                fit: BoxFit.cover,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(5),
               ),
+              image: DecorationImage(image: imageProvider, fit: BoxFit.cover),
             ),
           ),
           // Статичная заглушка вместо CircularProgressIndicator: спиннер тикает
           // каждый кадр, а на экране их одновременно десятки.
           placeholder: (context, url) => const _PosterStub(),
-          errorWidget: (context, url, error) => const _PosterStub(
-            icon: Icons.image_not_supported_outlined,
-          ),
+          errorWidget: (context, url, error) =>
+              const _PosterStub(icon: Icons.image_not_supported_outlined),
         );
       },
     );
@@ -197,9 +202,7 @@ class _PosterStub extends StatelessWidget {
         color: Color(0xFF2A2A2A),
         borderRadius: BorderRadius.vertical(top: Radius.circular(5)),
       ),
-      child: Center(
-        child: Icon(icon, color: Colors.white24, size: 32),
-      ),
+      child: Center(child: Icon(icon, color: Colors.white24, size: 32)),
     );
   }
 }

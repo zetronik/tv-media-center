@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -16,6 +18,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final ScrollController _scrollController = ScrollController();
   String _appVersion = '';
+  late final MovieProvider _movieProvider;
 
   Future<void> _initAppVersion() async {
     final PackageInfo info = await PackageInfo.fromPlatform();
@@ -29,26 +32,36 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _movieProvider = context.read<MovieProvider>();
     _initAppVersion();
-    _scrollController.addListener(() {
-      if (_scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent - 200) {
-        context.read<MovieProvider>().loadMoreMovies();
-      }
-    });
+    _scrollController.addListener(_onScroll);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _performStartupUpdate();
     });
   }
 
+  /// Слушатель вызывается на каждый кадр прокрутки, а зона в 200 px на коротком
+  /// списке — это почти весь его хвост. Провайдер берём из поля, а не через
+  /// context.read на каждый тик, и выходим по дешёвым флагам до обращения к
+  /// position.
+  void _onScroll() {
+    if (!_movieProvider.hasMore || _movieProvider.isLoading) return;
+    if (!_scrollController.hasClients) return;
+
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 200) {
+      _movieProvider.loadMoreMovies();
+    }
+  }
+
   Future<void> _performStartupUpdate() async {
-    final provider = context.read<MovieProvider>();
-    await provider.initDbAndLoad();
+    await _movieProvider.initDbAndLoad();
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -71,15 +84,50 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showYearFilterDialog(BuildContext context, MovieProvider provider) {
+  /// Год и список жанров не меняются между открытиями диалога — держим их
+  /// статикой, чтобы не пересобирать ~66 DropdownMenuItem на каждый
+  /// setDialogState прямо во время анимации открытия.
+  static final List<int> _allYears = () {
     final int currentYear = DateTime.now().year;
-    final List<int> allYears =
-        List.generate(currentYear - 1959, (i) => currentYear - i);
+    return List<int>.generate(currentYear - 1959, (i) => currentYear - i);
+  }();
 
+  static const List<String> _allGenres = [
+    'боевик',
+    'комедия',
+    'драма',
+    'фантастика',
+    'триллер',
+    'ужасы',
+    'мелодрама',
+    'детектив',
+    'приключения',
+    'фэнтези',
+    'криминал',
+    'семейный',
+  ];
+
+  void _resetScroll() {
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  /// Смена фильтра меняет длину списка, а позиция скролла остаётся прежней.
+  /// Без сброса ScrollPosition после короткого результата приходится
+  /// корректировать себя самому — на ТВ это выглядит как рывок сетки.
+  void _toggleTorrentFilter(MovieProvider provider) {
+    _resetScroll();
+    provider.toggleTorrentFilter();
+  }
+
+  Future<void> _showYearFilterDialog(
+    BuildContext context,
+    MovieProvider provider,
+  ) async {
     int? exactYear = provider.filterYearExact;
     int? startYear = provider.filterYearStart;
     int? endYear = provider.filterYearEnd;
-    bool isRange = provider.filterYearStart != null ||
+    bool isRange =
+        provider.filterYearStart != null ||
         provider.filterYearEnd != null ||
         (provider.filterYearExact == null &&
             (provider.filterYearStart != null ||
@@ -89,18 +137,18 @@ class _HomeScreenState extends State<HomeScreen> {
       isRange = true;
     }
 
-    showDialog(
+    final result = await showDialog<_YearFilterResult>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           // Years available for "До": must be >= startYear+1 (if startYear set)
           final List<int> toYears = startYear != null
-              ? allYears.where((y) => y > startYear!).toList()
-              : allYears;
+              ? _allYears.where((y) => y > startYear!).toList()
+              : _allYears;
           // Years available for "От": must be <= endYear-1 (if endYear set)
           final List<int> fromYears = endYear != null
-              ? allYears.where((y) => y < endYear!).toList()
-              : allYears;
+              ? _allYears.where((y) => y < endYear!).toList()
+              : _allYears;
 
           Widget _buildYearDropdown({
             required String label,
@@ -111,12 +159,16 @@ class _HomeScreenState extends State<HomeScreen> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label,
-                    style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                Text(
+                  label,
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                ),
                 const SizedBox(height: 4),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white10,
                     borderRadius: BorderRadius.circular(8),
@@ -124,8 +176,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   child: DropdownButton<int?>(
                     value: value,
-                    hint: const Text('—',
-                        style: TextStyle(color: Colors.white54)),
+                    hint: const Text(
+                      '—',
+                      style: TextStyle(color: Colors.white54),
+                    ),
                     dropdownColor: const Color(0xFF2A2A2A),
                     isExpanded: true,
                     underline: const SizedBox.shrink(),
@@ -134,14 +188,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     items: [
                       const DropdownMenuItem<int?>(
                         value: null,
-                        child:
-                            Text('—', style: TextStyle(color: Colors.white54)),
+                        child: Text(
+                          '—',
+                          style: TextStyle(color: Colors.white54),
+                        ),
                       ),
                       ...years.map(
-                        (y) => DropdownMenuItem<int?>(
-                          value: y,
-                          child: Text('$y'),
-                        ),
+                        (y) =>
+                            DropdownMenuItem<int?>(value: y, child: Text('$y')),
                       ),
                     ],
                     onChanged: onChanged,
@@ -186,9 +240,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildYearDropdown(
                       label: 'Год',
                       value: exactYear,
-                      years: allYears,
-                      onChanged: (val) =>
-                          setDialogState(() => exactYear = val),
+                      years: _allYears,
+                      onChanged: (val) => setDialogState(() => exactYear = val),
                     )
                   else
                     Row(
@@ -235,26 +288,26 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            // Диалог только возвращает выбор. Фильтр применяется после того,
+            // как showDialog завершится — см. ниже.
             actions: [
               TextButton(
-                onPressed: () {
-                  provider.setYearFilter(null, null, null);
-                  Navigator.pop(context);
-                },
+                onPressed: () => Navigator.pop(
+                  context,
+                  const _YearFilterResult(null, null, null),
+                ),
                 child: const Text(
                   'Сбросить',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
               TextButton(
-                onPressed: () {
-                  if (isRange) {
-                    provider.setYearFilter(null, startYear, endYear);
-                  } else {
-                    provider.setYearFilter(exactYear, null, null);
-                  }
-                  Navigator.pop(context);
-                },
+                onPressed: () => Navigator.pop(
+                  context,
+                  isRange
+                      ? _YearFilterResult(null, startYear, endYear)
+                      : _YearFilterResult(exactYear, null, null),
+                ),
                 child: const Text(
                   'Применить',
                   style: TextStyle(color: Colors.red),
@@ -265,28 +318,24 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       ),
     );
+
+    // Раньше setYearFilter вызывался прямо в onPressed, до Navigator.pop:
+    // перезагрузка списка (очистка + запрос + постройка сотни карточек)
+    // приходилась ровно на анимацию закрытия диалога и рвала её. Future от
+    // showDialog завершается уже после того, как анимация отыграла.
+    if (!mounted || result == null) return;
+    _resetScroll();
+    provider.setYearFilter(result.exact, result.start, result.end);
   }
 
-
-  void _showGenreFilterDialog(BuildContext context, MovieProvider provider) {
+  Future<void> _showGenreFilterDialog(
+    BuildContext context,
+    MovieProvider provider,
+  ) async {
     List<String> selectedGenres = List.from(provider.filterGenres);
     bool exclude = provider.filterExcludeGenres;
-    final List<String> allGenres = [
-      'боевик',
-      'комедия',
-      'драма',
-      'фантастика',
-      'триллер',
-      'ужасы',
-      'мелодрама',
-      'детектив',
-      'приключения',
-      'фэнтези',
-      'криминал',
-      'семейный',
-    ];
 
-    showDialog(
+    final result = await showDialog<_GenreFilterResult>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
@@ -317,9 +366,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   Flexible(
                     child: ListView.builder(
                       shrinkWrap: true,
-                      itemCount: allGenres.length,
+                      itemCount: _allGenres.length,
                       itemBuilder: (context, index) {
-                        final genre = allGenres[index];
+                        final genre = _allGenres[index];
                         return CheckboxListTile(
                           title: Text(
                             genre,
@@ -346,20 +395,20 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             actions: [
               TextButton(
-                onPressed: () {
-                  provider.setGenreFilter([], false);
-                  Navigator.pop(context);
-                },
+                onPressed: () => Navigator.pop(
+                  context,
+                  const _GenreFilterResult(<String>[], false),
+                ),
                 child: const Text(
                   'Сбросить',
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
               TextButton(
-                onPressed: () {
-                  provider.setGenreFilter(selectedGenres, exclude);
-                  Navigator.pop(context);
-                },
+                onPressed: () => Navigator.pop(
+                  context,
+                  _GenreFilterResult(selectedGenres, exclude),
+                ),
                 child: const Text(
                   'Применить',
                   style: TextStyle(color: Colors.red),
@@ -370,6 +419,11 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       ),
     );
+
+    // Применяем после закрытия диалога — см. комментарий в _showYearFilterDialog.
+    if (!mounted || result == null) return;
+    _resetScroll();
+    provider.setGenreFilter(result.genres, result.exclude);
   }
 
   Widget _buildSidebar(BuildContext context, bool isTvLayout) {
@@ -461,10 +515,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.only(bottom: 16.0),
                   child: Text(
                     _appVersion,
-                    style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -497,12 +548,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Checkbox(
                         value: provider.filterOnlyTorrents,
-                        onChanged: (_) => provider.toggleTorrentFilter(),
+                        onChanged: (_) => _toggleTorrentFilter(provider),
                         activeColor: Colors.red,
                         focusColor: Colors.white30,
                       ),
                       GestureDetector(
-                        onTap: () => provider.toggleTorrentFilter(),
+                        onTap: () => _toggleTorrentFilter(provider),
                         child: Text(
                           'Только с торрентами',
                           style: TextStyle(
@@ -520,7 +571,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (provider.filterYearExact != null) {
                         return 'Год: ${provider.filterYearExact}';
                       }
-                      if (provider.filterYearStart != null && provider.filterYearEnd != null) {
+                      if (provider.filterYearStart != null &&
+                          provider.filterYearEnd != null) {
                         return 'с ${provider.filterYearStart} по ${provider.filterYearEnd}';
                       }
                       if (provider.filterYearStart != null) {
@@ -531,7 +583,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       }
                       return 'Год: Все';
                     }(),
-                    isActive: provider.filterYearExact != null ||
+                    isActive:
+                        provider.filterYearExact != null ||
                         provider.filterYearStart != null ||
                         provider.filterYearEnd != null,
                     isTvLayout: isTvLayout,
@@ -540,12 +593,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 8),
                   // Кнопка фильтра по жанру
                   _FilterButton(
-                    title: 'Жанры: ' +
+                    title:
+                        'Жанры: ' +
                         (provider.filterGenres.isEmpty
                             ? 'Все'
                             : (provider.filterExcludeGenres
-                                ? 'Исключая (${provider.filterGenres.length})'
-                                : 'Включая (${provider.filterGenres.length})')),
+                                  ? 'Исключая (${provider.filterGenres.length})'
+                                  : 'Включая (${provider.filterGenres.length})')),
                     isActive: provider.filterGenres.isNotEmpty,
                     isTvLayout: isTvLayout,
                     onTap: () => _showGenreFilterDialog(context, provider),
@@ -581,62 +635,48 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildGrid(BuildContext context, MovieProvider provider) {
     if (provider.movies.isEmpty) {
-      return Center(
-        child: provider.isLoading
-            ? const CircularProgressIndicator(color: Colors.red)
-            : const Text(
-                'Нет контента.',
-                style: TextStyle(fontSize: 18, color: Colors.white54),
-              ),
+      if (provider.isLoading) return const _DelayedLoader();
+      return const Center(
+        child: Text(
+          'Нет контента.',
+          style: TextStyle(fontSize: 18, color: Colors.white54),
+        ),
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final double maxExtent =
-            MediaQuery.of(context).size.width < 600 ? 180 : 150;
-        // Formula for crossAxisCount in SliverGridDelegateWithMaxCrossAxisExtent:
-        // crossAxisCount = (width + crossAxisSpacing) ~/ (maxCrossAxisExtent + crossAxisSpacing)
-        int crossAxisCount = (constraints.maxWidth + 10) ~/ (maxExtent + 10);
-        if (crossAxisCount < 1) crossAxisCount = 1;
+    final double maxExtent = MediaQuery.of(context).size.width < 600
+        ? 180
+        : 150;
 
-        final int count = provider.movies.length;
-        final int lastRowStartIndex =
-            ((count / crossAxisCount).ceil() - 1) * crossAxisCount;
-
-        return GridView.builder(
-          controller: _scrollController,
-          // Высота ячейки ≈ maxExtent / 0.67 ≈ 224. Прежние 500 давали всего
-          // два ряда упреждения — при удержании кнопки пульта сетка уезжала
-          // быстрее, чем успевали декодироваться постеры.
-          cacheExtent: 1200,
-          padding: const EdgeInsets.only(
-            left: 16.0,
-            right: 16.0,
-            top: 16.0,
-            bottom: 40.0,
-          ),
-          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: maxExtent,
-            childAspectRatio: 0.67,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-          ),
-          itemCount: count,
-          itemBuilder: (context, index) {
-            final movie = provider.movies[index];
-            return _EdgeScrollAnchor(
-              // Ключ на внешнем виджете, а не на MovieCard внутри: иначе при
-              // изменении списка Flutter сопоставляет обёртку по позиции, а
-              // карточку по ключу, и состояние фокуса разъезжается.
-              key: ValueKey(movie.id),
-              controller: _scrollController,
-              isFirstRow: index < crossAxisCount,
-              isLastRow: index >= lastRowStartIndex,
-              child: MovieCard(movie: movie),
-            );
-          },
-        );
+    // Ни LayoutBuilder, ни ручного подсчёта колонок здесь больше нет.
+    // Прежняя формула `(maxWidth + 10) ~/ (maxExtent + 10)` не совпадала с
+    // тем, что реально делает SliverGridDelegateWithMaxCrossAxisExtent
+    // (`ceil(crossAxisExtent / (maxExtent + spacing))`, причём от ширины уже
+    // за вычетом padding). При сайдбаре 220 на экране 960 это давало 4 колонки
+    // вместо 5 — то есть «первый» и «последний» ряд вычислялись не для тех
+    // карточек, и доводка скролла срабатывала в неожиданных местах.
+    return GridView.builder(
+      controller: _scrollController,
+      // Высота ячейки ≈ maxExtent / 0.67. Прежние 500 давали всего два ряда
+      // упреждения — при удержании кнопки пульта сетка уезжала быстрее, чем
+      // успевали декодироваться постеры.
+      cacheExtent: 1200,
+      padding: const EdgeInsets.only(
+        left: 16.0,
+        right: 16.0,
+        top: 16.0,
+        bottom: 40.0,
+      ),
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: maxExtent,
+        childAspectRatio: 0.67,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+      ),
+      itemCount: provider.movies.length,
+      itemBuilder: (context, index) {
+        final movie = provider.movies[index];
+        return MovieCard(key: ValueKey(movie.id), movie: movie);
       },
     );
   }
@@ -687,11 +727,64 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-
-
-
 /// Экран прогресса скачивания БД. Вынесен отдельно, чтобы Consumer слушал
 /// только статус и прогресс, не задевая остальное дерево.
+class _YearFilterResult {
+  final int? exact;
+  final int? start;
+  final int? end;
+
+  const _YearFilterResult(this.exact, this.start, this.end);
+}
+
+class _GenreFilterResult {
+  final List<String> genres;
+  final bool exclude;
+
+  const _GenreFilterResult(this.genres, this.exclude);
+}
+
+/// Спиннер, который появляется только если загрузка затянулась.
+///
+/// Запрос к локальной SQLite обычно укладывается в десятки миллисекунд, и
+/// безусловный индикатор успевал лишь мигнуть — при каждом применении фильтра
+/// экран вспыхивал спиннером на пару кадров. Виджет живёт ровно столько,
+/// сколько длится загрузка (при isLoading == false он удаляется из дерева),
+/// поэтому таймер каждый раз начинается заново.
+class _DelayedLoader extends StatefulWidget {
+  const _DelayedLoader();
+
+  @override
+  State<_DelayedLoader> createState() => _DelayedLoaderState();
+}
+
+class _DelayedLoaderState extends State<_DelayedLoader> {
+  static const Duration _delay = Duration(milliseconds: 250);
+
+  bool _visible = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(_delay, () {
+      if (mounted) setState(() => _visible = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_visible) return const SizedBox.expand();
+    return const Center(child: CircularProgressIndicator(color: Colors.red));
+  }
+}
+
 class _DbUpdateScreen extends StatelessWidget {
   const _DbUpdateScreen();
 
@@ -727,62 +820,6 @@ class _DbUpdateScreen extends StatelessWidget {
           },
         ),
       ),
-    );
-  }
-}
-
-/// Доводит сетку до самого края, когда фокус попадает на первый или последний
-/// ряд: системный `ensureVisible` прокручивает минимально и оставляет карточку
-/// впритык к границе viewport, из-за чего верхний отступ и нижняя обрезка
-/// выглядят как срезанные.
-///
-/// Доводка выполняется в post-frame, чтобы не конкурировать с анимацией
-/// `ensureVisible` в том же кадре — раньше две анимации на одном
-/// ScrollController дёргали список.
-class _EdgeScrollAnchor extends StatelessWidget {
-  final ScrollController controller;
-  final bool isFirstRow;
-  final bool isLastRow;
-  final Widget child;
-
-  const _EdgeScrollAnchor({
-    super.key,
-    required this.controller,
-    required this.isFirstRow,
-    required this.isLastRow,
-    required this.child,
-  });
-
-  void _snapToEdge() {
-    if (!controller.hasClients) return;
-    final position = controller.position;
-
-    final double? target;
-    if (isFirstRow && position.pixels > 0) {
-      target = 0.0;
-    } else if (isLastRow && position.pixels < position.maxScrollExtent) {
-      target = position.maxScrollExtent;
-    } else {
-      target = null;
-    }
-    if (target == null) return;
-
-    controller.animateTo(
-      target,
-      duration: const Duration(milliseconds: 150),
-      curve: Curves.easeOut,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Focus(
-      canRequestFocus: false, // Prevents this wrapper from stealing focus
-      onFocusChange: (hasFocus) {
-        if (!hasFocus) return;
-        WidgetsBinding.instance.addPostFrameCallback((_) => _snapToEdge());
-      },
-      child: child,
     );
   }
 }
@@ -838,8 +875,7 @@ class _MenuButtonState extends State<_MenuButton> {
             widget.title,
             style: TextStyle(
               fontSize: fontSize,
-              fontWeight:
-                  widget.isActive ? FontWeight.bold : FontWeight.w500,
+              fontWeight: widget.isActive ? FontWeight.bold : FontWeight.w500,
               color: widget.isActive || _isFocused
                   ? Colors.white
                   : Colors.grey[400],
@@ -874,36 +910,41 @@ class _FilterButtonState extends State<_FilterButton> {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
-      onTap: widget.onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        height: widget.isTvLayout ? 28 : 36,
-        padding: EdgeInsets.symmetric(horizontal: widget.isTvLayout ? 12 : 16),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: _isFocused
-              ? Colors.white24
-              : (widget.isActive
-                  ? Colors.red.withValues(alpha: 0.3)
-                  : Colors.transparent),
-          border: Border.all(
-            color: _isFocused
-                ? Colors.white
-                : (widget.isActive ? Colors.red : Colors.grey[800]!),
-            width: _isFocused ? 2 : 1,
+    // Локальный Material — см. комментарий в MovieCard.
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: widget.isTvLayout ? 28 : 36,
+          padding: EdgeInsets.symmetric(
+            horizontal: widget.isTvLayout ? 12 : 16,
           ),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          widget.title,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: widget.isTvLayout ? 12 : 14,
-            fontWeight:
-                widget.isActive ? FontWeight.bold : FontWeight.normal,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _isFocused
+                ? Colors.white24
+                : (widget.isActive
+                      ? Colors.red.withValues(alpha: 0.3)
+                      : Colors.transparent),
+            border: Border.all(
+              color: _isFocused
+                  ? Colors.white
+                  : (widget.isActive ? Colors.red : Colors.grey[800]!),
+              width: _isFocused ? 2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            widget.title,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: widget.isTvLayout ? 12 : 14,
+              fontWeight: widget.isActive ? FontWeight.bold : FontWeight.normal,
+            ),
           ),
         ),
       ),

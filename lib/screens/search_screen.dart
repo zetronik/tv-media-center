@@ -508,32 +508,37 @@ class _TvKeyState extends State<_TvKey> {
   bool _isFocused = false;
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onFocusChange: (val) => setState(() => _isFocused = val),
-      onTap: widget.onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: _isFocused ? Colors.white : Colors.white12,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: widget.icon != null
-            ? Icon(
-                widget.icon,
-                size: 16,
-                color: _isFocused
-                    ? Colors.black
-                    : (widget.activeColor ?? Colors.white),
-              )
-            : Text(
-                widget.text ?? '',
-                style: TextStyle(
-                  color: _isFocused ? Colors.black : Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
+    // Локальный Material — см. комментарий в MovieCard. На экранной клавиатуре
+    // это особенно заметно: фокус бегает по ней постоянно.
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        onFocusChange: (val) => setState(() => _isFocused = val),
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _isFocused ? Colors.white : Colors.white12,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: widget.icon != null
+              ? Icon(
+                  widget.icon,
+                  size: 16,
+                  color: _isFocused
+                      ? Colors.black
+                      : (widget.activeColor ?? Colors.white),
+                )
+              : Text(
+                  widget.text ?? '',
+                  style: TextStyle(
+                    color: _isFocused ? Colors.black : Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
+        ),
       ),
     );
   }
