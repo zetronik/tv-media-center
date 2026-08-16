@@ -99,7 +99,7 @@ Poster decoding is the single biggest memory lever on a TV box. `_MoviePoster` p
 
 ### Playback
 
-Tapping a torrent fires an `AndroidIntent(action: 'action_view', data: magnetLink)` — the magnet is handed to Ace Stream / any magnet handler. `AndroidManifest.xml` declares the required `<queries>` entries (`org.acestream.media`, `magnet:` and `market:` VIEW intents); a new external-app hand-off needs a matching `<queries>` entry or the intent silently fails on Android 11+.
+Tapping a torrent fires an `AndroidIntent(action: 'action_view', data: magnetLink)` and launches it with **`launchChooser`, not `launch`** — that wraps the intent in `Intent.createChooser`, so the handler list appears every time even when the user has already set a default player. Plain `launch()` silently routed every magnet to that default. `AndroidManifest.xml` declares the required `<queries>` entries (`org.acestream.media`, `magnet:` and `market:` VIEW intents); a new external-app hand-off needs a matching `<queries>` entry or the intent silently fails on Android 11+.
 
 Also in the manifest: Leanback launcher category + `android:banner`, `leanback`/`touchscreen` marked not required, `RECORD_AUDIO` for voice search, and `usesCleartextTraffic="true"`.
 

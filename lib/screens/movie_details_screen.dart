@@ -490,21 +490,29 @@ class _TorrentCardState extends State<TorrentCard> {
           onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
           onTap: () async {
             if (widget.torrent.magnetLink.isEmpty) return;
+
+            // Messenger берём до await: после него context может быть уже не в
+            // дереве, а ScaffoldMessenger.of по нему искать нечего.
+            final messenger = ScaffoldMessenger.of(context);
             try {
               final intent = AndroidIntent(
                 action: 'action_view',
                 data: widget.torrent.magnetLink,
               );
-              await intent.launch();
+              // launchChooser, а не launch: он оборачивает интент в
+              // Intent.createChooser, который показывает список обработчиков
+              // даже когда одно из приложений уже назначено по умолчанию.
+              // С launch() система молча отдавала ссылку дефолтному плееру.
+              await intent.launchChooser('Открыть торрент через');
             } catch (e) {
-              debugPrint('Ошибка при запуске плеера: $e');
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Не удалось запустить Ace Stream'),
+              debugPrint('Ошибка при открытии торрент-ссылки: $e');
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Нет приложения, способного открыть торрент-ссылку',
                   ),
-                );
-              }
+                ),
+              );
             }
           },
           child: AnimatedContainer(
